@@ -2,7 +2,7 @@
     "zoho": {
         "client_id": "1000.2E30US2MLMRHDF3E4LADWZ3KG6335X",
         "client_secret": "64978eebe79652faad543d6826f0a993b911596f8e",
-        "refresh_token": "1000.3933d3bcd92d0cd5811e70b65e89496c.e6c0b99b444e1c326eee677f62496f63",
+        "refresh_token": "1000.31ae178a1c28ac2f316256042cf06b82.e0071b666d27133ef28b5643633fd99a",
         "api_domain": "https://www.zohoapis.in",
         "accounts_url": "https://accounts.zoho.in",
         "enquiry_module": "Deals"
@@ -13,14 +13,20 @@
         "smtp_port": 465,
         "sender_email": "saurabh.salunkhe@paikane.com",
         "sender_password": "tnxz buvn xqps qjvc",
-        "summary_recipients": ["salunkhesaurabh05@gmail.com", "manager@company.com"],
-        "send_owner_alerts": true
+        "summary_recipients": ["salunkhesaurabh05@gmail.com"],
+        "send_owner_alerts": false 
     },
 
     "lead_thresholds": {
         "no_action_days": 1,
         "not_converted_days": 3
     },
+
+    "lead_terminal_statuses": [
+        "ORDER WON", "Converted", "Junk", "Not Qualified"
+    ],
+
+    "enquiry_cutoff_date": "2025-04-01",
 
     "kva_categories": [
         {
@@ -64,6 +70,8 @@
         "MFC": 2
     },
 
+    
+
     "stages_to_monitor": [
         "YET_TO_QUOTE", "QUOTED", "FINALIZATION",
         "WON", "ORDER_BOOKED", "HOLD", "BUDGETARY", "MFC"
@@ -75,11 +83,11 @@
         "YET_TO_QUOTE": "Yet To Quote",
         "QUOTED": "Quoted",
         "FINALIZATION": "Finalization",
-        "WON": "Won — Order Not Booked",
-        "ORDER_BOOKED": "Order Booked — Pending Next Step",
+        "WON": "Won - Order Not Booked",
+        "ORDER_BOOKED": "Order Booked - Pending",
         "HOLD": "On Hold",
         "BUDGETARY": "Budgetary Estimate",
-        "MFC": "MFC — Manufacturing Clearance Pending"
+        "MFC": "MFC - Manufacturing Clearance"
     },
 
     "stage_colors": {
@@ -94,11 +102,11 @@
     },
 
     "lead_columns": [
-        {"field": "Last_Name", "label": "Last Name"},
+        {"field": "Last_Name", "label": "Lead Name"},
         {"field": "Company", "label": "Company"},
         {"field": "Owner", "label": "Lead Owner"},
         {"field": "Created_By", "label": "Created By"},
-        {"field": "Last_Visited_Time", "label": "Most Recent View"},
+        {"field": "Last_Visited_Time", "label": "Most Recent Visit"},
         {"field": "Phone", "label": "Phone"}
     ],
 
@@ -106,7 +114,10 @@
         {"field": "Deal_Name", "label": "Enquiry Name"},
         {"field": "Account_Name", "label": "Customer Name"},
         {"field": "Owner", "label": "Enquiry Owner"},
-        {"field": "OFFERING", "label": "OFFERING"},
-        {"field": "Amount", "label": "Amount"}
+        {"field": "OFFERING", "label": "Offering"},
+        {"field": "Amount", "label": "Amount"},
+        {"field": "DG_KVA", "label": "DG kVA"},
+        {"field": "Modified_Time", "label": "Last Updated"},
+        {"field": "Status_Remarks", "label": "Remarks"}
     ]
 }

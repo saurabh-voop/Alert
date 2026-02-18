@@ -1,7 +1,9 @@
 venv
 daily_alert.log
-src\__pycache__\
-
+__pycache__
+*.pyc
+*.html
+*.xlsx
 
 
 

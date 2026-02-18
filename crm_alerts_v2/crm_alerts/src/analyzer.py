@@ -1,11 +1,7 @@
 """
 Overdue Analyzer
 =================
-Core business logic:
-- Business day calculation (Mon-Fri, excludes weekends)
-- kVA-based threshold lookup
-- Overdue lead detection (via COQL)
-- stalled enquiry detection (via COQL)
+Core business logic.
 """
 
 import logging
@@ -20,42 +16,95 @@ log = logging.getLogger(__name__)
 # ============================================================================
 
 def business_days_between(start, end=None) -> int:
-    """
-    Count weekdays (Mon-Fri) between start and end dates.
-    Does NOT exclude public holidays.
-    """
     if end is None:
         end = date.today()
-
     if isinstance(start, str):
         start = datetime.strptime(start[:10], "%Y-%m-%d").date()
     elif isinstance(start, datetime):
         start = start.date()
-
     if isinstance(end, str):
         end = datetime.strptime(end[:10], "%Y-%m-%d").date()
     elif isinstance(end, datetime):
         end = end.date()
-
     count = 0
     current = start
     while current < end:
         if current.weekday() < 5:
             count += 1
         current += timedelta(days=1)
-
     return count
+
+
+# ============================================================================
+# OWNER + ACCOUNT RESOLVERS
+# ============================================================================
+
+def resolve_owner(record: dict, user_cache: dict) -> tuple:
+    """Resolve Owner field to (name, email)."""
+    owner = record.get("Owner")
+    if owner is None:
+        return "-", ""
+    if isinstance(owner, dict):
+        if owner.get("name") and str(owner.get("name")) != "null":
+            return owner["name"], owner.get("email", "")
+        uid = str(owner.get("id", ""))
+        user = user_cache.get(uid, {})
+        return user.get("name", uid), user.get("email", "")
+    uid = str(owner)
+    user = user_cache.get(uid, {})
+    return user.get("name", uid), user.get("email", "")
+
+
+def resolve_account(record: dict, crm) -> str:
+    """Resolve Account_Name field from cache."""
+    acct = record.get("Account_Name")
+    if acct is None:
+        return "-"
+    if isinstance(acct, dict):
+        if acct.get("name") and str(acct.get("name")) != "null":
+            return acct["name"]
+        aid = str(acct.get("id", ""))
+        if aid:
+            return crm.get_account_name(aid)
+    return str(acct) if acct else "-"
 
 
 # ============================================================================
 # FIELD VALUE EXTRACTOR
 # ============================================================================
 
-def get_field_value(record: dict, field_name: str) -> str:
-    """
-    Extract a field value from a CRM record.
-    Handles nested fields like Owner.name, Owner.email.
-    """
+def get_field_value(record: dict, field_name: str,
+                    user_cache: dict = None, crm=None) -> str:
+    if user_cache is None:
+        user_cache = {}
+
+    if field_name == "Owner.name" or field_name == "Owner":
+        name, _ = resolve_owner(record, user_cache)
+        return name
+    if field_name == "Owner.email":
+        _, email = resolve_owner(record, user_cache)
+        return email if email else "-"
+    if field_name == "Account_Name":
+        if crm:
+            return resolve_account(record, crm)
+        acct = record.get("Account_Name")
+        if isinstance(acct, dict):
+            return acct.get("name", acct.get("id", "-"))
+        return str(acct) if acct else "-"
+    if field_name == "Contact_Name":
+        contact = record.get("Contact_Name")
+        if isinstance(contact, dict):
+            return contact.get("name", contact.get("id", "-"))
+        return str(contact) if contact else "-"
+    if field_name == "Created_By":
+        cb = record.get("Created_By")
+        if isinstance(cb, dict):
+            if cb.get("name"):
+                return cb["name"]
+            uid = str(cb.get("id", ""))
+            user = user_cache.get(uid, {})
+            return user.get("name", uid)
+        return str(cb) if cb else "-"
     if "." in field_name:
         parts = field_name.split(".")
         parent = record.get(parts[0])
@@ -64,9 +113,8 @@ def get_field_value(record: dict, field_name: str) -> str:
             if val and str(val) != "null":
                 return str(val)
         return "-"
-
     val = record.get(field_name)
-    if val is None or str(val) == "null":
+    if val is None or str(val) == "null" or str(val) == "None":
         return "-"
     return str(val)
 
@@ -76,181 +124,162 @@ def get_field_value(record: dict, field_name: str) -> str:
 # ============================================================================
 
 def get_kva_value(record: dict) -> int:
-    """Extract kVA value from a record. Returns 0 if not set."""
     raw = record.get("DG_KVA")
-    if raw and str(raw) != "null":
+    if raw and str(raw) != "null" and str(raw) != "None":
         try:
             return int(float(str(raw)))
         except (ValueError, TypeError):
             return 0
     return 0
 
-
 def get_kva_category(kva_value: int, config: dict) -> str:
-    """Return the category label for a given kVA value."""
     for cat in config["kva_categories"]:
         if cat["min_kva"] <= kva_value <= cat["max_kva"]:
             return cat["label"]
     return config["default_thresholds"]["label"]
 
-
 def get_threshold_days(stage: str, kva_value: int, config: dict) -> int:
-    """
-    Return the threshold in business days for a stage + kVA combination.
-    Fixed-threshold stages (WON, ORDER_BOOKED, etc.) ignore kVA.
-    Variable stages (YET_TO_QUOTE, QUOTED, FINALIZATION) use kVA categories.
-    """
     fixed = config.get("fixed_stage_thresholds", {})
     if stage in fixed:
         return fixed[stage]
-
-    stage_key_map = {
-        "YET_TO_QUOTE": "yet_to_quote_days",
-        "QUOTED": "quoted_days",
-        "FINALIZATION": "finalization_days"
-    }
-    stage_key = stage_key_map.get(stage)
+    stage_key = {"YET_TO_QUOTE": "yet_to_quote_days",
+                 "QUOTED": "quoted_days",
+                 "FINALIZATION": "finalization_days"}.get(stage)
     if not stage_key:
         return 1
-
     for cat in config["kva_categories"]:
         if cat["min_kva"] <= kva_value <= cat["max_kva"]:
             return cat[stage_key]
-
     return config["default_thresholds"].get(stage_key, 1)
 
 
 # ============================================================================
-# LEAD FIELDS FOR COQL
+# COQL FIELD LISTS (do NOT include "id")
 # ============================================================================
 
 LEAD_FIELDS = [
-    "id", "Last_Name", "First_Name", "Company", "Phone", "Email",
+    "Last_Name", "First_Name", "Company", "Phone", "Email",
     "Owner", "Created_Time", "Modified_Time", "Last_Activity_Time",
-    "Converted", "Lead_Status"
+    "Last_Visited_Time", "Created_By", "Status", "Lead_Source", "Lead_Num"
 ]
-
-# ============================================================================
-# ENQUIRY FIELDS FOR COQL
-# ============================================================================
 
 ENQUIRY_FIELDS = [
-    "id", "Deal_Name", "Stage", "Amount", "DG_KVA",
+    "Deal_Name", "Stage", "Amount", "DG_KVA",
     "Owner", "Created_Time", "Modified_Time", "Closing_Date",
-    "Status_Remarks"
+    "Status_Remarks", "Account_Name", "OFFERING", "ENQ_NUM"
 ]
 
 
 # ============================================================================
-# OVERDUE LEAD DETECTION
+# FETCH OVERDUE LEADS
 # ============================================================================
 
-def find_overdue_leads(crm, config: dict) -> tuple:
-    """
-    Fetch and analyze leads for overdue conditions using COQL.
-
-    Returns:
-        overdue_no_action: list of {"lead": record, "biz_days": int}
-        overdue_not_converted: list of {"lead": record, "biz_days": int}
-        owner_alerts: dict of {email: [{"lead", "type", "days"}, ...]}
-    """
+def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
     today = date.today()
     action_days = config["lead_thresholds"]["no_action_days"]
     convert_days = config["lead_thresholds"]["not_converted_days"]
 
-    # Cutoff with weekend buffer
     cutoff = today - timedelta(days=action_days + 3)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
 
-    # COQL query — fetch all unconverted leads created before cutoff
+    # Only leads created between cutoff date and threshold window
+    lead_cutoff = config.get("lead_cutoff_date", config.get("enquiry_cutoff_date", "2025-04-01"))
     where = (
-        f"Created_Time < '{cutoff_str}T23:59:59+05:30' "
-        f"and Converted = false"
+        f"Created_Time between '{lead_cutoff}T00:00:00+05:30' "
+        f"and '{cutoff_str}T23:59:59+05:30'"
     )
 
-    log.info("Fetching unconverted leads (COQL)...")
-    leads = crm.fetch_records("Leads", LEAD_FIELDS, where, max_records=1000)
-    log.info(f"  Found {len(leads)} unconverted leads")
+    log.info("Fetching leads (COQL)...")
+    leads = crm.fetch_records("Leads", LEAD_FIELDS, where, max_records=2000)
+    log.info(f"  Found {len(leads)} leads (broad filter)")
+
+    # Filter out terminal statuses in Python
+    terminal_statuses = config.get("lead_terminal_statuses",
+                                    ["ORDER WON", "Converted", "Junk", "Not Qualified"])
+    terminal_set = set(s.lower() for s in terminal_statuses)
 
     overdue_no_action = []
     overdue_not_converted = []
     owner_alerts = defaultdict(list)
 
     for lead in leads:
+        # Skip terminal leads
+        status = lead.get("Status")
+        if status and str(status).lower() in terminal_set:
+            continue
+
         created = lead.get("Created_Time", "")
         if not created:
             continue
-
         biz_days = business_days_between(created, today)
 
-        # --- No action taken ---
+        # No action taken
         last_activity = lead.get("Last_Activity_Time")
-        no_activity = (not last_activity or str(last_activity) == "null")
+        no_activity = (not last_activity or str(last_activity) == "null"
+                       or str(last_activity) == "None")
 
         if biz_days >= action_days and no_activity:
             overdue_no_action.append({"lead": lead, "biz_days": biz_days})
-            _collect_owner_alert(owner_alerts, lead, "No Action", biz_days)
+            _, owner_email = resolve_owner(lead, user_cache)
+            if owner_email:
+                owner_alerts[owner_email].append({
+                    "lead": lead, "type": "No Action", "days": biz_days
+                })
 
-        # --- Not converted ---
+        # Not converted
         if biz_days >= convert_days:
             overdue_not_converted.append({"lead": lead, "biz_days": biz_days})
-            _collect_owner_alert(owner_alerts, lead, "Not Converted", biz_days)
+            _, owner_email = resolve_owner(lead, user_cache)
+            if owner_email:
+                owner_alerts[owner_email].append({
+                    "lead": lead, "type": "Not Converted", "days": biz_days
+                })
 
-    log.info(f"  No action: {len(overdue_no_action)} | "
-             f"Not converted: {len(overdue_not_converted)}")
-
+    log.info(f"  After filtering terminal statuses: "
+             f"No action: {len(overdue_no_action)} | Not converted: {len(overdue_not_converted)}")
     return overdue_no_action, overdue_not_converted, owner_alerts
 
 
 # ============================================================================
-# stalled ENQUIRY DETECTION
+# FETCH STALLED ENQUIRIES
 # ============================================================================
 
-def find_stalled_enquiries(crm, config: dict) -> tuple:
-    """
-    Fetch and analyze enquiries stalled beyond their thresholds using COQL.
-
-    Returns:
-        stage_results: dict of {stage: [items]}
-        total_count: int
-        owner_alerts: dict of {email: [items]}
-    """
+def find_stalled_enquiries(crm, config: dict, user_cache: dict) -> tuple:
     today = date.today()
     module = config["zoho"]["enquiry_module"]
-    stages = config["stages_to_monitor"]
     terminal = config["terminal_stages"]
 
     stage_results = {}
     total_count = 0
     owner_alerts = defaultdict(list)
 
-    for stage in stages:
+    for stage in config["stages_to_monitor"]:
         if stage in terminal:
             continue
 
-        # Broad filter: modified more than 1 day ago
-        cutoff = today - timedelta(days=1)
-        cutoff_str = cutoff.strftime("%Y-%m-%d")
+        # COQL only supports 2 conditions. Use Stage + Created_Time in COQL,
+        # then filter Modified_Time in Python.
+        enq_cutoff = config.get("enquiry_cutoff_date", "2025-04-01")
 
         where = (
             f"Stage = '{stage}' "
-            f"and Modified_Time < '{cutoff_str}T23:59:59+05:30'"
+            f"and Created_Time > '{enq_cutoff}T00:00:00+05:30'"
         )
 
         log.info(f"Fetching enquiries at stage: {stage}...")
         records = crm.fetch_records(module, ENQUIRY_FIELDS, where,
                                     max_records=1000)
 
+        # Filter Modified_Time in Python (COQL can't do 3 conditions)
+        cutoff = today - timedelta(days=1)
         overdue_items = []
 
         for rec in records:
             kva_value = get_kva_value(rec)
             threshold = get_threshold_days(stage, kva_value, config)
-
             mod_time = rec.get("Modified_Time", "")
             if not mod_time:
                 continue
-
             biz_days = business_days_between(mod_time, today)
 
             if biz_days >= threshold:
@@ -265,40 +294,19 @@ def find_stalled_enquiries(crm, config: dict) -> tuple:
                 overdue_items.append(item)
                 total_count += 1
 
-                # Owner alert
-                owner = rec.get("Owner")
-                if owner and isinstance(owner, dict):
-                    email = owner.get("email", "")
-                    if email and email != "null":
-                        owner_alerts[email].append({
-                            "record": rec,
-                            "stage": stage,
-                            "days_stalled": biz_days,
-                            "threshold": threshold,
-                            "kva_category": kva_label
-                        })
+                _, owner_email = resolve_owner(rec, user_cache)
+                if owner_email:
+                    owner_alerts[owner_email].append({
+                        "record": rec,
+                        "stage": stage,
+                        "days_stalled": biz_days,
+                        "threshold": threshold,
+                        "kva_category": kva_label
+                    })
 
         if overdue_items:
             stage_results[stage] = overdue_items
-            log.info(f"  {stage}: {len(overdue_items)} overdue")
+            log.info(f"  {stage}: {len(overdue_items)} stalled")
 
     log.info(f"Total stalled enquiries: {total_count}")
     return stage_results, total_count, owner_alerts
-
-
-# ============================================================================
-# HELPER
-# ============================================================================
-
-def _collect_owner_alert(owner_alerts: dict, lead: dict,
-                         alert_type: str, days: int):
-    """Add a lead alert to the owner's alert list."""
-    owner = lead.get("Owner")
-    if owner and isinstance(owner, dict):
-        email = owner.get("email", "")
-        if email and email != "null":
-            owner_alerts[email].append({
-                "lead": lead,
-                "type": alert_type,
-                "days": days
-            })

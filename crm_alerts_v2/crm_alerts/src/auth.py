@@ -1,8 +1,5 @@
 """
 Zoho OAuth Token Manager
-========================
-Handles access token generation using the refresh token.
-Access tokens expire in 1 hour. This module gets a fresh one each run.
 """
 
 import logging
@@ -13,7 +10,6 @@ log = logging.getLogger(__name__)
 
 
 class ZohoAuth:
-    """Manages Zoho OAuth2 authentication."""
 
     def __init__(self, config: dict):
         zoho = config["zoho"]
@@ -24,10 +20,6 @@ class ZohoAuth:
         self._access_token = None
 
     def get_access_token(self) -> str:
-        """
-        Get a valid access token.
-        Refreshes automatically using the refresh token.
-        """
         if self._access_token:
             return self._access_token
 
@@ -52,9 +44,4 @@ class ZohoAuth:
             return self._access_token
         else:
             log.error(f"Token refresh failed: {result}")
-            log.error("Check client_id, client_secret, and refresh_token in config.json")
             sys.exit(1)
-
-    def reset(self):
-        """Force a fresh token on next call."""
-        self._access_token = None

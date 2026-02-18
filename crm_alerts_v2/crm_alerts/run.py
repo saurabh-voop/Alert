@@ -1,228 +1,157 @@
 """
-CRM Daily Overdue Alert — Entry Point
+CRM Daily Stalled Alert — Entry Point
 =======================================
-
 Usage:
-    python run.py                  → Live run (sends emails)
-    python run.py --test           → Test mode (saves HTML files, no emails sent)
-    python run.py --config path    → Use a custom config file
-
-Files generated in test mode:
-    test_summary_email.html        → Preview of MD summary email
-    test_owner_<email>.html        → Preview of each owner's alert email
-    Open these in Chrome to see exactly what the emails look like.
+    python run.py                  → Live run (emails + Excel)
+    python run.py --test           → Saves HTML + Excel locally, no emails
+    python run.py --config path    → Custom config file
 """
 
-import json
-import sys
-import os
-import logging
+import json, sys, os, logging
 from datetime import date
-
-# ============================================================================
-# SETUP LOGGING
-# ============================================================================
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("daily_alert.log", encoding="utf-8")
-    ]
+    handlers=[logging.StreamHandler(), logging.FileHandler("daily_alert.log", encoding="utf-8")]
 )
 log = logging.getLogger(__name__)
-
-# ============================================================================
-# IMPORTS (from src/)
-# ============================================================================
 
 from src.auth import ZohoAuth
 from src.crm import ZohoCRM
 from src.analyzer import find_overdue_leads, find_stalled_enquiries
-from src.email_builder import (
-    build_summary_html,
-    build_owner_html,
-    build_all_clear_html
-)
+from src.email_builder import build_summary_html, build_owner_html, build_all_clear_html
+from src.excel_builder import build_excel_report
 from src.mailer import send_email
 
-# ============================================================================
-# PARSE ARGUMENTS
-# ============================================================================
 
-def parse_args():
-    """Parse command line arguments."""
-    config_path = "config.json"
-    test_mode = False
-
-    args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        if args[i] == "--test":
-            test_mode = True
-        elif args[i] == "--config" and i + 1 < len(args):
-            config_path = args[i + 1]
-            i += 1
-        i += 1
-
-    return config_path, test_mode
-
-# ============================================================================
-# LOAD CONFIG
-# ============================================================================
-
-def load_config(path: str) -> dict:
-    """Load and validate config file."""
+def load_config(path):
     if not os.path.exists(path):
-        log.error(f"Config file not found: {path}")
-        log.error("Make sure config.json is in the same folder as run.py")
-        sys.exit(1)
-
-    with open(path, "r") as f:
+        log.error(f"Config not found: {path}"); sys.exit(1)
+    with open(path) as f:
         config = json.load(f)
-
-    # Basic validation
-    required = ["zoho", "email", "lead_thresholds", "kva_categories"]
-    for key in required:
-        if key not in config:
-            log.error(f"Missing required config section: {key}")
-            sys.exit(1)
-
-    # Check for placeholder values
-    placeholders = ["PASTE_YOUR_CLIENT_ID", "PASTE_YOUR_NEW_CLIENT_SECRET",
-                     "PASTE_YOUR_REFRESH_TOKEN", "PASTE_YOUR_GMAIL_ADDRESS",
-                     "PASTE_YOUR_APP_PASSWORD"]
-
-    for ph in placeholders:
-        config_str = json.dumps(config)
-        if ph in config_str:
-            log.error(f"Config still has placeholder: {ph}")
-            log.error("Edit config.json and replace all PASTE_YOUR_* values.")
-            sys.exit(1)
-
+    for ph in ["PASTE_YOUR_CLIENT_ID", "PASTE_YOUR_NEW_CLIENT_SECRET",
+                "PASTE_YOUR_REFRESH_TOKEN", "PASTE_YOUR_GMAIL_ADDRESS", "PASTE_YOUR_APP_PASSWORD"]:
+        if ph in json.dumps(config):
+            log.error(f"Config has placeholder: {ph}"); sys.exit(1)
     return config
 
-# ============================================================================
-# SAVE TEST HTML
-# ============================================================================
-
-def save_test_html(filename: str, html: str):
-    """Save HTML to file for preview in browser."""
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(html)
-    log.info(f"  Saved: {filename} (open in Chrome to preview)")
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 def main():
-    config_path, test_mode = parse_args()
+    config_path = "config.json"
+    test_mode = False
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--test": test_mode = True
+        elif arg == "--config" and i + 1 < len(args): config_path = args[i + 1]
 
     log.info("=" * 60)
-    log.info("CRM DAILY OVERDUE ALERT — STARTING")
+    log.info("CRM DAILY STALLED ALERT — STARTING")
     log.info(f"Date:    {date.today().strftime('%d-%b-%Y, %A')}")
     log.info(f"Config:  {config_path}")
-    log.info(f"Mode:    {'TEST (no emails sent)' if test_mode else 'LIVE'}")
+    log.info(f"Mode:    {'TEST' if test_mode else 'LIVE'}")
     log.info("=" * 60)
 
-    # --- Load config ---
     config = load_config(config_path)
-
-    # --- Authenticate ---
-    log.info("Authenticating with Zoho CRM...")
     auth = ZohoAuth(config)
     crm = ZohoCRM(auth, config)
 
-    # --- Fetch overdue leads ---
+    # Fetch user list for Owner name resolution
+    log.info("Fetching CRM users for owner resolution...")
+    user_cache = crm.fetch_users()
+
+    # Analyze Leads
     log.info("")
     log.info("--- ANALYZING LEADS ---")
     overdue_no_action, overdue_not_converted, owner_lead_alerts = \
-        find_overdue_leads(crm, config)
+        find_overdue_leads(crm, config, user_cache)
 
-    # --- Fetch stalled enquiries ---
+    # Analyze Enquiries
     log.info("")
     log.info("--- ANALYZING ENQUIRIES ---")
     stage_results, total_enq_count, owner_enq_alerts = \
-        find_stalled_enquiries(crm, config)
+        find_stalled_enquiries(crm, config, user_cache)
 
-    # --- Check if anything to report ---
-    has_anything = (
-        len(overdue_no_action) > 0 or
-        len(overdue_not_converted) > 0 or
-        total_enq_count > 0
+    has_anything = (len(overdue_no_action) > 0 or len(overdue_not_converted) > 0 or total_enq_count > 0)
+
+    # All Clear
+    if not has_anything:
+        log.info(""); log.info("No stalled items. Sending all-clear.")
+        html = build_all_clear_html()
+        if test_mode:
+            with open("test_all_clear.html", "w", encoding="utf-8") as f: f.write(html)
+            log.info("Saved: test_all_clear.html")
+        for r in config["email"]["summary_recipients"]:
+            send_email(r, f"All Clear — {date.today().strftime('%d-%b-%Y')}", html, config, test_mode)
+        log.info("Done."); return
+
+    # --- BULK PRE-FETCH ACCOUNT NAMES ---
+    # Collect all records that have Account_Name and fetch names in bulk
+    log.info("")
+    log.info("--- PRE-FETCHING ACCOUNT NAMES ---")
+    all_enquiry_records = []
+    for stage, items in stage_results.items():
+        for item in items:
+            all_enquiry_records.append(item["record"])
+    crm.bulk_fetch_accounts(all_enquiry_records)
+
+    # Excel Report
+    log.info("")
+    log.info("--- BUILDING EXCEL REPORT ---")
+    excel_file = build_excel_report(
+        overdue_no_action, overdue_not_converted,
+        stage_results, config, user_cache, crm
     )
 
-    # --- ALL CLEAR ---
-    if not has_anything:
-        log.info("")
-        log.info("No overdue items found. Sending all-clear email.")
-        clear_html = build_all_clear_html()
-
-        if test_mode:
-            save_test_html("test_all_clear.html", clear_html)
-
-        subject = f"All Clear — {date.today().strftime('%d-%b-%Y')}"
-        for recipient in config["email"]["summary_recipients"]:
-            send_email(recipient, subject, clear_html, config, test_mode)
-
-        log.info("Done.")
-        return
-
-    # --- BUILD & SEND SUMMARY EMAIL ---
+    # Summary Email
     log.info("")
     log.info("--- BUILDING SUMMARY EMAIL ---")
     summary_html = build_summary_html(
         overdue_no_action, overdue_not_converted,
-        stage_results, total_enq_count, config
+        stage_results, total_enq_count,
+        config, user_cache, crm
     )
 
     if test_mode:
-        save_test_html("test_summary_email.html", summary_html)
+        with open("test_summary_email.html", "w", encoding="utf-8") as f:
+            f.write(summary_html)
+        log.info("Saved: test_summary_email.html")
 
-    subject = f"Daily Overdue Alert Summary — {date.today().strftime('%d-%b-%Y')}"
-    for recipient in config["email"]["summary_recipients"]:
-        send_email(recipient, subject, summary_html, config, test_mode)
+    subject = f"Daily Stalled Alert Summary — {date.today().strftime('%d-%b-%Y')}"
+    for r in config["email"]["summary_recipients"]:
+        send_email(r, subject, summary_html, config, test_mode, attachment_path=excel_file)
 
-    # --- BUILD & SEND OWNER ALERTS ---
+    # Owner Alerts
     if config["email"]["send_owner_alerts"]:
         log.info("")
         log.info("--- BUILDING OWNER ALERTS ---")
+        all_owners = set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys()))
+        log.info(f"Owners with stalled items: {len(all_owners)}")
 
-        all_owners = set(
-            list(owner_lead_alerts.keys()) +
-            list(owner_enq_alerts.keys())
-        )
-        log.info(f"Owners with overdue items: {len(all_owners)}")
-
-        for owner_email in all_owners:
-            lead_alerts = owner_lead_alerts.get(owner_email, [])
-            enq_alerts = owner_enq_alerts.get(owner_email, [])
-
-            owner_html, item_count = build_owner_html(
-                owner_email, lead_alerts, enq_alerts, config
-            )
+        for oe in all_owners:
+            la = owner_lead_alerts.get(oe, [])
+            ea = owner_enq_alerts.get(oe, [])
+            owner_html, count = build_owner_html(oe, la, ea, config, user_cache, crm)
 
             if test_mode:
-                safe = owner_email.replace("@", "_at_").replace(".", "_")
-                save_test_html(f"test_owner_{safe}.html", owner_html)
+                safe = oe.replace("@", "_at_").replace(".", "_")
+                with open(f"test_owner_{safe}.html", "w", encoding="utf-8") as f:
+                    f.write(owner_html)
+                log.info(f"Saved: test_owner_{safe}.html")
 
-            owner_subject = (
-                f"ACTION REQUIRED: {item_count} overdue items — "
-                f"{date.today().strftime('%d-%b-%Y')}"
-            )
-            send_email(owner_email, owner_subject, owner_html,
-                       config, test_mode)
+            send_email(oe, f"ACTION REQUIRED: {count} stalled items — {date.today().strftime('%d-%b-%Y')}",
+                       owner_html, config, test_mode)
 
-    # --- DONE ---
+    # Done
     log.info("")
     log.info("=" * 60)
     log.info("COMPLETED SUCCESSFULLY")
     log.info(f"  Leads (no action):     {len(overdue_no_action)}")
     log.info(f"  Leads (not converted): {len(overdue_not_converted)}")
-    log.info(f"  Enquiries stalled:       {total_enq_count}")
+    log.info(f"  Enquiries stalled:     {total_enq_count}")
     log.info(f"  Owner alerts sent:     {len(set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys())))}")
+    if excel_file:
+        log.info(f"  Excel report:          {excel_file}")
     log.info("=" * 60)
 
 
