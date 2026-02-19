@@ -103,23 +103,34 @@ def main():
         stage_results, config, user_cache, crm
     )
 
-    # Summary Email
+    # # Summary Email
+    # log.info("")
+    # log.info("--- BUILDING SUMMARY EMAIL ---")
+    # summary_html = build_summary_html(
+    #     overdue_no_action, overdue_not_converted,
+    #     stage_results, total_enq_count,
+    #     config, user_cache, crm
+    # )
+
+    # if test_mode:
+    #     with open("test_summary_email.html", "w", encoding="utf-8") as f:
+    #         f.write(summary_html)
+    #     log.info("Saved: test_summary_email.html")
+
+    # subject = f"Daily Stalled Alert Summary — {date.today().strftime('%d-%b-%Y')}"
+    # for r in config["email"]["summary_recipients"]:
+    #     send_email(r, subject, summary_html, config, test_mode, attachment_path=excel_file)
+
+    # Send Excel report via email
     log.info("")
-    log.info("--- BUILDING SUMMARY EMAIL ---")
-    summary_html = build_summary_html(
-        overdue_no_action, overdue_not_converted,
-        stage_results, total_enq_count,
-        config, user_cache, crm
-    )
-
-    if test_mode:
-        with open("test_summary_email.html", "w", encoding="utf-8") as f:
-            f.write(summary_html)
-        log.info("Saved: test_summary_email.html")
-
-    subject = f"Daily Stalled Alert Summary — {date.today().strftime('%d-%b-%Y')}"
+    log.info("--- SENDING REPORT ---")
+    subject = f"Daily Stalled Report — {date.today().strftime('%d-%b-%Y')}"
+    simple_body = f"""<html><body>
+    <p>Daily stalled report attached.</p>
+    <p>Leads (no action): {len(overdue_no_action)} | Leads (not converted): {len(overdue_not_converted)} | Enquiries stalled: {total_enq_count}</p>
+    </body></html>"""
     for r in config["email"]["summary_recipients"]:
-        send_email(r, subject, summary_html, config, test_mode, attachment_path=excel_file)
+        send_email(r, subject, simple_body, config, test_mode, attachment_path=excel_file)
 
     # Owner Alerts
     if config["email"]["send_owner_alerts"]:

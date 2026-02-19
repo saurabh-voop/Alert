@@ -40,7 +40,6 @@ def business_days_between(start, end=None) -> int:
 # ============================================================================
 
 def resolve_owner(record: dict, user_cache: dict) -> tuple:
-    """Resolve Owner field to (name, email)."""
     owner = record.get("Owner")
     if owner is None:
         return "-", ""
@@ -56,7 +55,6 @@ def resolve_owner(record: dict, user_cache: dict) -> tuple:
 
 
 def resolve_account(record: dict, crm) -> str:
-    """Resolve Account_Name field from cache."""
     acct = record.get("Account_Name")
     if acct is None:
         return "-"
@@ -78,12 +76,30 @@ def get_field_value(record: dict, field_name: str,
     if user_cache is None:
         user_cache = {}
 
+    # Lead Full Name (First + Last)
+    if field_name == "Full_Name":
+        first = record.get("First_Name", "")
+        last = record.get("Last_Name", "")
+        if first and str(first) not in ("null", "None"):
+            return f"{first} {last}".strip()
+        return str(last) if last else "-"
+
+    # DG_KVA — show NA instead of -
+    if field_name == "DG_KVA":
+        val = record.get("DG_KVA")
+        if val is None or str(val) in ("null", "None", ""):
+            return "NA"
+        return str(val)
+
+    # Owner
     if field_name == "Owner.name" or field_name == "Owner":
         name, _ = resolve_owner(record, user_cache)
         return name
     if field_name == "Owner.email":
         _, email = resolve_owner(record, user_cache)
         return email if email else "-"
+
+    # Account_Name
     if field_name == "Account_Name":
         if crm:
             return resolve_account(record, crm)
@@ -91,11 +107,15 @@ def get_field_value(record: dict, field_name: str,
         if isinstance(acct, dict):
             return acct.get("name", acct.get("id", "-"))
         return str(acct) if acct else "-"
+
+    # Contact_Name
     if field_name == "Contact_Name":
         contact = record.get("Contact_Name")
         if isinstance(contact, dict):
             return contact.get("name", contact.get("id", "-"))
         return str(contact) if contact else "-"
+
+    # Created_By
     if field_name == "Created_By":
         cb = record.get("Created_By")
         if isinstance(cb, dict):
@@ -105,6 +125,8 @@ def get_field_value(record: dict, field_name: str,
             user = user_cache.get(uid, {})
             return user.get("name", uid)
         return str(cb) if cb else "-"
+
+    # Generic nested field
     if "." in field_name:
         parts = field_name.split(".")
         parent = record.get(parts[0])
@@ -113,6 +135,8 @@ def get_field_value(record: dict, field_name: str,
             if val and str(val) != "null":
                 return str(val)
         return "-"
+
+    # Simple field
     val = record.get(field_name)
     if val is None or str(val) == "null" or str(val) == "None":
         return "-"
@@ -125,7 +149,7 @@ def get_field_value(record: dict, field_name: str,
 
 def get_kva_value(record: dict) -> int:
     raw = record.get("DG_KVA")
-    if raw and str(raw) != "null" and str(raw) != "None":
+    if raw and str(raw) not in ("null", "None", ""):
         try:
             return int(float(str(raw)))
         except (ValueError, TypeError):
@@ -133,6 +157,8 @@ def get_kva_value(record: dict) -> int:
     return 0
 
 def get_kva_category(kva_value: int, config: dict) -> str:
+    if kva_value == 0:
+        return "NA"
     for cat in config["kva_categories"]:
         if cat["min_kva"] <= kva_value <= cat["max_kva"]:
             return cat["label"]
@@ -141,7 +167,7 @@ def get_kva_category(kva_value: int, config: dict) -> str:
 def get_threshold_days(stage: str, kva_value: int, config: dict) -> int:
     fixed = config.get("fixed_stage_thresholds", {})
     if stage in fixed:
-        return fixed[stage]
+        return int(fixed[stage])
     stage_key = {"YET_TO_QUOTE": "yet_to_quote_days",
                  "QUOTED": "quoted_days",
                  "FINALIZATION": "finalization_days"}.get(stage)
@@ -149,8 +175,14 @@ def get_threshold_days(stage: str, kva_value: int, config: dict) -> int:
         return 1
     for cat in config["kva_categories"]:
         if cat["min_kva"] <= kva_value <= cat["max_kva"]:
-            return cat[stage_key]
-    return config["default_thresholds"].get(stage_key, 1)
+            return int(cat[stage_key])
+    val = config["default_thresholds"].get(stage_key)
+    if val is not None:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 1
+    return 1
 
 
 # ============================================================================
@@ -182,7 +214,6 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
     cutoff = today - timedelta(days=action_days + 3)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
 
-    # Only leads created between cutoff date and threshold window
     lead_cutoff = config.get("lead_cutoff_date", config.get("enquiry_cutoff_date", "2025-04-01"))
     where = (
         f"Created_Time between '{lead_cutoff}T00:00:00+05:30' "
@@ -193,7 +224,6 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
     leads = crm.fetch_records("Leads", LEAD_FIELDS, where, max_records=2000)
     log.info(f"  Found {len(leads)} leads (broad filter)")
 
-    # Filter out terminal statuses in Python
     terminal_statuses = config.get("lead_terminal_statuses",
                                     ["ORDER WON", "Converted", "Junk", "Not Qualified"])
     terminal_set = set(s.lower() for s in terminal_statuses)
@@ -203,7 +233,6 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
     owner_alerts = defaultdict(list)
 
     for lead in leads:
-        # Skip terminal leads
         status = lead.get("Status")
         if status and str(status).lower() in terminal_set:
             continue
@@ -213,10 +242,8 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
             continue
         biz_days = business_days_between(created, today)
 
-        # No action taken
         last_activity = lead.get("Last_Activity_Time")
-        no_activity = (not last_activity or str(last_activity) == "null"
-                       or str(last_activity) == "None")
+        no_activity = (not last_activity or str(last_activity) in ("null", "None"))
 
         if biz_days >= action_days and no_activity:
             overdue_no_action.append({"lead": lead, "biz_days": biz_days})
@@ -226,7 +253,6 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
                     "lead": lead, "type": "No Action", "days": biz_days
                 })
 
-        # Not converted
         if biz_days >= convert_days:
             overdue_not_converted.append({"lead": lead, "biz_days": biz_days})
             _, owner_email = resolve_owner(lead, user_cache)
@@ -235,8 +261,7 @@ def find_overdue_leads(crm, config: dict, user_cache: dict) -> tuple:
                     "lead": lead, "type": "Not Converted", "days": biz_days
                 })
 
-    log.info(f"  After filtering terminal statuses: "
-             f"No action: {len(overdue_no_action)} | Not converted: {len(overdue_not_converted)}")
+    log.info(f"  After filtering: No action: {len(overdue_no_action)} | Not converted: {len(overdue_not_converted)}")
     return overdue_no_action, overdue_not_converted, owner_alerts
 
 
@@ -257,20 +282,15 @@ def find_stalled_enquiries(crm, config: dict, user_cache: dict) -> tuple:
         if stage in terminal:
             continue
 
-        # COQL only supports 2 conditions. Use Stage + Created_Time in COQL,
-        # then filter Modified_Time in Python.
         enq_cutoff = config.get("enquiry_cutoff_date", "2025-04-01")
-
         where = (
             f"Stage = '{stage}' "
             f"and Created_Time > '{enq_cutoff}T00:00:00+05:30'"
         )
 
         log.info(f"Fetching enquiries at stage: {stage}...")
-        records = crm.fetch_records(module, ENQUIRY_FIELDS, where,
-                                    max_records=1000)
+        records = crm.fetch_records(module, ENQUIRY_FIELDS, where, max_records=1000)
 
-        # Filter Modified_Time in Python (COQL can't do 3 conditions)
         cutoff = today - timedelta(days=1)
         overdue_items = []
 

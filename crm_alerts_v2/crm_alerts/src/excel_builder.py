@@ -41,7 +41,7 @@ def _autowidth(ws, headers, row_count):
     for ci in range(1, len(headers) + 1):
         col = ws.cell(row=1, column=ci).column_letter
         max_len = len(str(headers[ci-1]))
-        for ri in range(2, min(row_count + 2, 102)):  # sample first 100 rows
+        for ri in range(2, min(row_count + 2, 102)):
             val = ws.cell(row=ri, column=ci).value
             if val: max_len = max(max_len, len(str(val)))
         ws.column_dimensions[col].width = min(max_len + 4, 50)
@@ -51,11 +51,9 @@ def _filter(ws, headers, row_count):
         end = ws.cell(row=1, column=len(headers)).column_letter
         ws.auto_filter.ref = f"A1:{end}{row_count + 1}"
 
-
-def _calc_days_on_stage(record):
-    """Calculate days from Created_Time to today (total days on this enquiry)."""
+def _calc_enquiry_age(record):
     created = record.get("Created_Time", "")
-    if not created or str(created) == "null" or str(created) == "None":
+    if not created or str(created) in ("null", "None"):
         return "-"
     try:
         created_date = datetime.strptime(str(created)[:10], "%Y-%m-%d").date()
@@ -94,13 +92,13 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             od = owner_data[n]; od["total"] += 1; od["stages"][stage] += 1
             od["days_over"] += max(0, item["days_stalled"] - item["threshold"])
             amt = item["record"].get("Amount")
-            if amt and str(amt) not in ("null","None"):
+            if amt and str(amt) not in ("null", "None"):
                 try: od["amount"] += float(amt)
                 except: pass
 
     hdrs = ["Owner", "Leads (No Action)", "Leads (Not Conv.)", "Total Enq Stalled"]
     for st in stages: hdrs.append(stage_names.get(st, st))
-    hdrs.extend(["Total Amount (₹)", "Total Days Over", "Avg Days Over"])
+    hdrs.extend(["Total Amount (₹)", "Total Days Stalled For", "Avg Days Stalled For"])
     _hdr(ws, hdrs, s)
 
     sorted_owners = sorted(owner_data.items(), key=lambda x: x[1]["total"], reverse=True)
@@ -126,8 +124,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
     m_hdrs = [
         "Owner", "Customer Name", "Enquiry Name", "Enq No.", "Stage",
-        "kVA", "Offering", "Amount (₹)", "Days on Stage", "Threshold",
-        "Over By", "Enquiry Age (Days)", "Created Date", "Last Updated", "Remarks"
+        "kVA", "Offering", "Amount (₹)", "Threshold",
+        "Stalled For", "Enquiry Age (Days)", "Created Date", "Last Updated",
+        "Stage Since", "Remarks"
     ]
     _hdr(ws2, m_hdrs, s)
 
@@ -136,13 +135,13 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for item in items:
             rec = item["record"]
             owner_name, _ = resolve_owner(rec, user_cache)
-            over_by = max(0, item["days_stalled"] - item["threshold"])
-            age = _calc_days_on_stage(rec)
+            stalled_for = max(0, item["days_stalled"] - item["threshold"])
+            age = _calc_enquiry_age(rec)
             created = get_field_value(rec, "Created_Time", user_cache, crm)
             updated = get_field_value(rec, "Modified_Time", user_cache, crm)
             amt = None
             raw_amt = rec.get("Amount")
-            if raw_amt and str(raw_amt) not in ("null","None"):
+            if raw_amt and str(raw_amt) not in ("null", "None"):
                 try: amt = float(raw_amt)
                 except: pass
             master.append({
@@ -155,28 +154,28 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
                     get_field_value(rec, "DG_KVA", user_cache, crm),
                     get_field_value(rec, "OFFERING", user_cache, crm),
                     amt,
-                    item["days_stalled"],
                     item["threshold"],
-                    over_by,
+                    stalled_for,
                     age,
                     created[:10] if created != "-" and len(created) >= 10 else created,
                     updated[:10] if updated != "-" and len(updated) >= 10 else updated,
+                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
                     get_field_value(rec, "Status_Remarks", user_cache, crm),
                 ],
-                "over_by": over_by
+                "stalled_for": stalled_for
             })
 
-    master.sort(key=lambda x: (x["row"][0], -x["over_by"]))
+    master.sort(key=lambda x: (x["row"][0], -x["stalled_for"]))
 
     for ri, item in enumerate(master, 2):
         row = item["row"]
         for ci, val in enumerate(row, 1):
             c = ws2.cell(row=ri, column=ci, value=val)
             c.border = s["b"]; c.font = s["df"]
-        # Highlight Over By (col 11)
-        ob = ws2.cell(row=ri, column=11)
-        if item["over_by"] >= 10: ob.font = s["rf"]; ob.fill = s["redfill"]
-        elif item["over_by"] >= 5: ob.font = s["bf"]; ob.fill = s["yellowfill"]
+        # Highlight Stalled For (col 10)
+        sf = ws2.cell(row=ri, column=10)
+        if item["stalled_for"] >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
+        elif item["stalled_for"] >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
         # Amount format (col 8)
         if row[7] is not None: ws2.cell(row=ri, column=8).number_format = '#,##0'
 
@@ -193,11 +192,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         ws_l.sheet_properties.tabColor = color; _hdr(ws_l, l_hdrs, s)
         for ri, item in enumerate(items, 2):
             row = [get_field_value(item["lead"], c["field"], user_cache, crm) for c in config["lead_columns"]]
-            # Created Date
             created = get_field_value(item["lead"], "Created_Time", user_cache, crm)
             created_short = created[:10] if created != "-" and len(created) >= 10 else created
-            # Lead Age = calendar days from created to today
-            age = _calc_days_on_stage(item["lead"])
+            age = _calc_enquiry_age(item["lead"])
             row.extend([created_short, age, item["biz_days"]])
             for ci, val in enumerate(row, 1):
                 c = ws_l.cell(row=ri, column=ci, value=val)
@@ -213,7 +210,8 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     # ================================================================
     log.info("  Building per-stage sheets...")
     e_hdrs = [c["label"] for c in config["enquiry_columns"]] + [
-        "kVA Category", "Threshold", "Days on Stage", "Over By", "Enquiry Age (Days)"
+        "kVA Category", "Threshold", "Stalled For",
+        "Enquiry Age (Days)", "Stage Since"
     ]
 
     for stage in stages:
@@ -226,18 +224,28 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
         for ri, item in enumerate(items, 2):
             rec = item["record"]
-            over_by = max(0, item["days_stalled"] - item["threshold"])
-            age = _calc_days_on_stage(rec)
+            stalled_for = max(0, item["days_stalled"] - item["threshold"])
+            age = _calc_enquiry_age(rec)
+            mod = get_field_value(rec, "Modified_Time", user_cache, crm)
+            stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
+
             row = [get_field_value(rec, c["field"], user_cache, crm) for c in config["enquiry_columns"]]
-            row.extend([item["kva_category"], f"{item['threshold']} day(s)", item["days_stalled"], over_by, age])
+            row.extend([
+                item["kva_category"],
+                f"{item['threshold']} day(s)",
+                stalled_for,
+                age,
+                stage_since
+            ])
             for ci, val in enumerate(row, 1):
                 c = ws_stg.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]; c.font = s["df"]
-            # Highlight Over By
-            ob_ci = len(row) - 1  # Over By column
-            ob = ws_stg.cell(row=ri, column=ob_ci)
-            if over_by >= 10: ob.font = s["rf"]; ob.fill = s["redfill"]
-            elif over_by >= 5: ob.font = s["bf"]; ob.fill = s["yellowfill"]
+
+            # Highlight Stalled For (3rd from end)
+            sf_ci = len(row) - 2
+            sf = ws_stg.cell(row=ri, column=sf_ci)
+            if stalled_for >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
+            elif stalled_for >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
 
         _autowidth(ws_stg, e_hdrs, len(items)); _filter(ws_stg, e_hdrs, len(items))
         ws_stg.freeze_panes = "A2"
