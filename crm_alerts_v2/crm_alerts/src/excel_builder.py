@@ -124,10 +124,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     ws2 = wb.create_sheet("Master List"); ws2.sheet_properties.tabColor = "E74C3C"
 
     m_hdrs = [
-        "Owner", "Customer Name", "Enquiry Name", "Enq No.", "Stage",
-        "kVA", "Offering", "Amount (₹)", "Threshold",
-        "Stalled For", "Enquiry Age (Days)", "Created Date", "Last Updated",
-        "Stage Since", "Remarks"
+        "Enq No.", "Enquiry Age (Days)", "Owner", "Offering", "Amount", "Customer Name",
+        "Enquiry Name", "kVA", "Stage", "Stage Since", "Last Updated", "Stalled For",
+        "Remarks", "Kva category", "threshold"
     ]
     _hdr(ws2, m_hdrs, s)
 
@@ -147,23 +146,26 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             if raw_amt and str(raw_amt) not in ("null", "None"):
                 try: amt = float(raw_amt)
                 except: pass
+
+            stage_since = updated[:10] if updated != "-" and len(updated) >= 10 else updated
+
             master.append({
                 "row": [
-                    owner_name,
-                    get_field_value(rec, "Account_Name", user_cache, crm),
-                    get_field_value(rec, "Deal_Name", user_cache, crm),
                     get_field_value(rec, "ENQ_NUM", user_cache, crm),
-                    stage_names.get(stage, stage),
-                    get_field_value(rec, "DG_KVA", user_cache, crm),
+                    age,
+                    owner_name,
                     get_field_value(rec, "OFFERING", user_cache, crm),
                     amt,
-                    threshold_display,
+                    get_field_value(rec, "Account_Name", user_cache, crm),
+                    get_field_value(rec, "Deal_Name", user_cache, crm),
+                    get_field_value(rec, "DG_KVA", user_cache, crm),
+                    stage_names.get(stage, stage),
+                    stage_since,
+                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
                     stalled_for,
-                    age,
-                    created[:10] if created != "-" and len(created) >= 10 else created,
-                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
-                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
                     get_field_value(rec, "Status_Remarks", user_cache, crm),
+                    item.get("kva_category"),
+                    threshold_display,
                 ],
                 "stalled_for": stalled_for if isinstance(stalled_for, int) else 0
             })
@@ -175,14 +177,14 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for ci, val in enumerate(row, 1):
             c = ws2.cell(row=ri, column=ci, value=val)
             c.border = s["b"]; c.font = s["df"]
-        # Highlight Stalled For (col 10)
+        # Highlight Stalled For (col 12)
         sf_val = item["stalled_for"]
-        sf = ws2.cell(row=ri, column=10)
+        sf = ws2.cell(row=ri, column=12)
         if isinstance(sf_val, int):
             if sf_val >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
             elif sf_val >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
-        # Amount format (col 8)
-        if row[7] is not None: ws2.cell(row=ri, column=8).number_format = '#,##0'
+        # Amount format (col 5)
+        if row[4] is not None: ws2.cell(row=ri, column=5).number_format = '#,##0'
 
     _autowidth(ws2, m_hdrs, len(master)); _filter(ws2, m_hdrs, len(master))
     ws2.freeze_panes = "A2"
@@ -214,9 +216,11 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     # SHEET 5+: PER STAGE
     # ================================================================
     log.info("  Building per-stage sheets...")
-    e_hdrs = [c["label"] for c in config["enquiry_columns"]] + [
-        "kVA Category", "Threshold", "Stalled For",
-        "Enquiry Age (Days)", "Stage Since"
+    # Exact column sequence as required
+    e_hdrs = [
+        "Enq No.", "Enquiry Age (Days)", "Owner", "Offering", "Amount",
+        "Customer Name", "Enquiry Name", "kVA", "Stage", "Stage Since",
+        "Last Updated", "Stalled For", "Remarks", "Kva category", "threshold"
     ]
 
     for stage in stages:
@@ -235,22 +239,43 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             age = _calc_enquiry_age(rec)
             mod = get_field_value(rec, "Modified_Time", user_cache, crm)
             stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
+            last_updated = mod[:10] if mod != "-" and len(mod) >= 10 else mod
+            amt = None
+            raw_amt = rec.get("Amount")
+            if raw_amt and str(raw_amt) not in ("null", "None"):
+                try: amt = float(raw_amt)
+                except: pass
 
-            row = [get_field_value(rec, c["field"], user_cache, crm) for c in config["enquiry_columns"]]
-            row.extend([
-                item["kva_category"],
-                threshold_display,
-                stalled_for,
-                age,
-                stage_since
-            ])
+            # Exact sequence: Enq No. | Enquiry Age | Owner | Offering | Amount |
+            #                 Customer Name | Enquiry Name | kVA | Stage | Stage Since |
+            #                 Last Updated | Stalled For | Remarks | Kva category | threshold
+            row = [
+                get_field_value(rec, "ENQ_NUM", user_cache, crm),       # col 1:  Enq No.
+                age,                                                      # col 2:  Enquiry Age (Days)
+                get_field_value(rec, "Owner", user_cache, crm),          # col 3:  Owner
+                get_field_value(rec, "OFFERING", user_cache, crm),       # col 4:  Offering
+                amt,                                                      # col 5:  Amount
+                get_field_value(rec, "Account_Name", user_cache, crm),   # col 6:  Customer Name
+                get_field_value(rec, "Deal_Name", user_cache, crm),      # col 7:  Enquiry Name
+                get_field_value(rec, "DG_KVA", user_cache, crm),         # col 8:  kVA
+                stage_names.get(stage, stage),                            # col 9:  Stage
+                stage_since,                                              # col 10: Stage Since
+                last_updated,                                             # col 11: Last Updated
+                stalled_for,                                              # col 12: Stalled For
+                get_field_value(rec, "Status_Remarks", user_cache, crm), # col 13: Remarks
+                item["kva_category"],                                     # col 14: Kva category
+                threshold_display,                                        # col 15: threshold
+            ]
+
             for ci, val in enumerate(row, 1):
                 c = ws_stg.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]; c.font = s["df"]
 
-            # Highlight Stalled For (3rd from end)
-            sf_ci = len(row) - 2
-            sf = ws_stg.cell(row=ri, column=sf_ci)
+            # Amount format (col 5)
+            if amt is not None: ws_stg.cell(row=ri, column=5).number_format = '#,##0'
+
+            # Highlight Stalled For (col 12)
+            sf = ws_stg.cell(row=ri, column=12)
             if isinstance(stalled_for, int):
                 if stalled_for >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
                 elif stalled_for >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
@@ -260,7 +285,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
     # ================================================================
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    filename = f"stalled_report_{timestamp}.xlsx"
+    filename = f"CRM Lead & Activities, stalled_activites_{timestamp}.xlsx"
     wb.save(filename)
     log.info(f"  Excel saved: {filename}")
     return filename
