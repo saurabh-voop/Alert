@@ -90,7 +90,8 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for item in items:
             n, _ = resolve_owner(item["record"], user_cache)
             od = owner_data[n]; od["total"] += 1; od["stages"][stage] += 1
-            od["days_over"] += max(0, item["days_stalled"] - item["threshold"])
+            if item["threshold"] > 0:
+                od["days_over"] += max(0, item["days_stalled"] - item["threshold"])
             amt = item["record"].get("Amount")
             if amt and str(amt) not in ("null", "None"):
                 try: od["amount"] += float(amt)
@@ -135,7 +136,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for item in items:
             rec = item["record"]
             owner_name, _ = resolve_owner(rec, user_cache)
-            stalled_for = max(0, item["days_stalled"] - item["threshold"])
+            is_na = item["threshold"] == 0
+            stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
+            threshold_display = "NA" if is_na else item["threshold"]
             age = _calc_enquiry_age(rec)
             created = get_field_value(rec, "Created_Time", user_cache, crm)
             updated = get_field_value(rec, "Modified_Time", user_cache, crm)
@@ -154,7 +157,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
                     get_field_value(rec, "DG_KVA", user_cache, crm),
                     get_field_value(rec, "OFFERING", user_cache, crm),
                     amt,
-                    item["threshold"],
+                    threshold_display,
                     stalled_for,
                     age,
                     created[:10] if created != "-" and len(created) >= 10 else created,
@@ -162,7 +165,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
                     updated[:10] if updated != "-" and len(updated) >= 10 else updated,
                     get_field_value(rec, "Status_Remarks", user_cache, crm),
                 ],
-                "stalled_for": stalled_for
+                "stalled_for": stalled_for if isinstance(stalled_for, int) else 0
             })
 
     master.sort(key=lambda x: (x["row"][0], -x["stalled_for"]))
@@ -173,9 +176,11 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             c = ws2.cell(row=ri, column=ci, value=val)
             c.border = s["b"]; c.font = s["df"]
         # Highlight Stalled For (col 10)
+        sf_val = item["stalled_for"]
         sf = ws2.cell(row=ri, column=10)
-        if item["stalled_for"] >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
-        elif item["stalled_for"] >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
+        if isinstance(sf_val, int):
+            if sf_val >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
+            elif sf_val >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
         # Amount format (col 8)
         if row[7] is not None: ws2.cell(row=ri, column=8).number_format = '#,##0'
 
@@ -224,7 +229,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
         for ri, item in enumerate(items, 2):
             rec = item["record"]
-            stalled_for = max(0, item["days_stalled"] - item["threshold"])
+            is_na = item["threshold"] == 0
+            stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
+            threshold_display = "NA" if is_na else f"{item['threshold']} day(s)"
             age = _calc_enquiry_age(rec)
             mod = get_field_value(rec, "Modified_Time", user_cache, crm)
             stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
@@ -232,7 +239,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             row = [get_field_value(rec, c["field"], user_cache, crm) for c in config["enquiry_columns"]]
             row.extend([
                 item["kva_category"],
-                f"{item['threshold']} day(s)",
+                threshold_display,
                 stalled_for,
                 age,
                 stage_since
@@ -244,8 +251,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             # Highlight Stalled For (3rd from end)
             sf_ci = len(row) - 2
             sf = ws_stg.cell(row=ri, column=sf_ci)
-            if stalled_for >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
-            elif stalled_for >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
+            if isinstance(stalled_for, int):
+                if stalled_for >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
+                elif stalled_for >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
 
         _autowidth(ws_stg, e_hdrs, len(items)); _filter(ws_stg, e_hdrs, len(items))
         ws_stg.freeze_panes = "A2"

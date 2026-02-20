@@ -165,9 +165,13 @@ def get_kva_category(kva_value: int, config: dict) -> str:
     return config["default_thresholds"]["label"]
 
 def get_threshold_days(stage: str, kva_value: int, config: dict) -> int:
+    """Returns threshold in biz days. Returns 0 when kVA is not set (NA)."""
     fixed = config.get("fixed_stage_thresholds", {})
     if stage in fixed:
         return int(fixed[stage])
+    # kVA not set — return 0 so Excel can show NA
+    if kva_value == 0:
+        return 0
     stage_key = {"YET_TO_QUOTE": "yet_to_quote_days",
                  "QUOTED": "quoted_days",
                  "FINALIZATION": "finalization_days"}.get(stage)
@@ -302,7 +306,8 @@ def find_stalled_enquiries(crm, config: dict, user_cache: dict) -> tuple:
                 continue
             biz_days = business_days_between(mod_time, today)
 
-            if biz_days >= threshold:
+            # threshold=0 means NA (no kVA set) — still include but mark as NA
+            if threshold == 0 or biz_days >= threshold:
                 kva_label = get_kva_category(kva_value, config)
                 item = {
                     "record": rec,
