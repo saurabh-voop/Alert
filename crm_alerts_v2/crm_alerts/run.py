@@ -3,7 +3,7 @@ CRM Daily Stalled Alert — Entry Point
 =======================================
 Usage:
     python run.py                  → Live run (emails + Excel)
-    python run.py --test           → Saves HTML + Excel locally, no emails
+    python run.py --test           → Saves Excel locally, no emails
     python run.py --config path    → Custom config file
 """
 
@@ -19,9 +19,9 @@ log = logging.getLogger(__name__)
 
 from src.auth import ZohoAuth
 from src.crm import ZohoCRM
-from src.analyzer import find_overdue_leads, find_stalled_enquiries
-from src.email_builder import build_summary_html, build_owner_html, build_all_clear_html
-from src.excel_builder import build_excel_report
+from src.analyzer import find_overdue_leads, find_stalled_enquiries, resolve_owner
+from src.email_builder import build_all_clear_html
+from src.excel_builder import build_excel_report, build_owner_excel
 from src.mailer import send_email
 
 
@@ -86,7 +86,6 @@ def main():
         log.info("Done."); return
 
     # --- BULK PRE-FETCH ACCOUNT NAMES ---
-    # Collect all records that have Account_Name and fetch names in bulk
     log.info("")
     log.info("--- PRE-FETCHING ACCOUNT NAMES ---")
     all_enquiry_records = []
@@ -95,7 +94,7 @@ def main():
             all_enquiry_records.append(item["record"])
     crm.bulk_fetch_accounts(all_enquiry_records)
 
-    # Excel Report
+    # Excel Report (for MD)
     log.info("")
     log.info("--- BUILDING EXCEL REPORT ---")
     excel_file = build_excel_report(
@@ -103,25 +102,7 @@ def main():
         stage_results, config, user_cache, crm
     )
 
-    # # Summary Email
-    # log.info("")
-    # log.info("--- BUILDING SUMMARY EMAIL ---")
-    # summary_html = build_summary_html(
-    #     overdue_no_action, overdue_not_converted,
-    #     stage_results, total_enq_count,
-    #     config, user_cache, crm
-    # )
-
-    # if test_mode:
-    #     with open("test_summary_email.html", "w", encoding="utf-8") as f:
-    #         f.write(summary_html)
-    #     log.info("Saved: test_summary_email.html")
-
-    # subject = f"Daily Stalled Alert Summary — {date.today().strftime('%d-%b-%Y')}"
-    # for r in config["email"]["summary_recipients"]:
-    #     send_email(r, subject, summary_html, config, test_mode, attachment_path=excel_file)
-
-    # Send Excel report via email
+    # Send report to summary recipients
     log.info("")
     log.info("--- SENDING REPORT ---")
     subject = f"Daily Stalled Report — {date.today().strftime('%d-%b-%Y')}"
@@ -132,26 +113,45 @@ def main():
     for r in config["email"]["summary_recipients"]:
         send_email(r, subject, simple_body, config, test_mode, attachment_path=excel_file)
 
-    # Owner Alerts
+    # Owner Alerts — individual Excel per owner
+    owner_emails_sent = 0
     if config["email"]["send_owner_alerts"]:
         log.info("")
-        log.info("--- BUILDING OWNER ALERTS ---")
-        all_owners = set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys()))
-        log.info(f"Owners with stalled items: {len(all_owners)}")
+        log.info("--- BUILDING OWNER ALERTS (Excel) ---")
+        all_owner_emails = set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys()))
+        log.info(f"Owners with stalled items: {len(all_owner_emails)}")
 
-        for oe in all_owners:
+        for oe in all_owner_emails:
+            # Get owner name from user cache
+            owner_name = oe  # fallback to email
+            for uid, udata in user_cache.items():
+                if udata.get("email") == oe:
+                    owner_name = udata.get("name", oe)
+                    break
+
             la = owner_lead_alerts.get(oe, [])
             ea = owner_enq_alerts.get(oe, [])
-            owner_html, count = build_owner_html(oe, la, ea, config, user_cache, crm)
+            total_items = len(la) + len(ea)
 
-            if test_mode:
-                safe = oe.replace("@", "_at_").replace(".", "_")
-                with open(f"test_owner_{safe}.html", "w", encoding="utf-8") as f:
-                    f.write(owner_html)
-                log.info(f"Saved: test_owner_{safe}.html")
+            # Build per-owner Excel
+            owner_excel = build_owner_excel(oe, owner_name, la, ea, config, user_cache, crm)
 
-            send_email(oe, f"ACTION REQUIRED: {count} stalled items — {date.today().strftime('%d-%b-%Y')}",
-                       owner_html, config, test_mode)
+            if owner_excel:
+                if test_mode:
+                    log.info(f"  [TEST] Would send to {oe} ({owner_name}): {total_items} items — {owner_excel}")
+                else:
+                    owner_body = f"""<html><body>
+                    <p>Hi {owner_name},</p>
+                    <p>You have <strong>{total_items} stalled items</strong> that need your attention. Please review the attached report and take action.</p>
+                    <p>Report date: {date.today().strftime('%d-%b-%Y')}</p>
+                    </body></html>"""
+                    send_email(
+                        oe,
+                        f"ACTION REQUIRED: {total_items} stalled items — {date.today().strftime('%d-%b-%Y')}",
+                        owner_body, config, test_mode,
+                        attachment_path=owner_excel
+                    )
+                owner_emails_sent += 1
 
     # Done
     log.info("")
@@ -160,7 +160,7 @@ def main():
     log.info(f"  Leads (no action):     {len(overdue_no_action)}")
     log.info(f"  Leads (not converted): {len(overdue_not_converted)}")
     log.info(f"  Enquiries stalled:     {total_enq_count}")
-    log.info(f"  Owner alerts sent:     {len(set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys())))}")
+    log.info(f"  Owner alerts sent:     {owner_emails_sent}")
     if excel_file:
         log.info(f"  Excel report:          {excel_file}")
     log.info("=" * 60)

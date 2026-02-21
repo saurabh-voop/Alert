@@ -2,9 +2,11 @@
 Excel Report Builder
 =====================
 Sheets: Owner Summary | Master List | Leads No Action | Leads Not Converted | Per-Stage sheets
+Also: Per-owner Excel files for individual alerts
 """
 
 import logging
+import os
 from datetime import date, datetime
 from collections import defaultdict
 from .analyzer import get_field_value, resolve_owner, get_kva_category, business_days_between
@@ -61,6 +63,10 @@ def _calc_enquiry_age(record):
     except:
         return "-"
 
+
+# ================================================================
+# MAIN REPORT (for MD / Management)
+# ================================================================
 
 def build_excel_report(overdue_no_action, overdue_not_converted,
                        stage_results, config, user_cache, crm) -> str:
@@ -124,9 +130,10 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     ws2 = wb.create_sheet("Master List"); ws2.sheet_properties.tabColor = "E74C3C"
 
     m_hdrs = [
-        "Enquiry No.", "Enquiry Age (Days)", "Stage Since", "Stalled For",
-        "Enquiry Owner", "Customer Name", "Offering", "DG kVA", "Amount",
-        "Last Updated", "Enquiry Name", "Remarks", "kVA Category", "Threshold"
+        "Owner", "Customer Name", "Enquiry Name", "Enq No.", "Stage",
+        "kVA", "Offering", "Amount (₹)", "Threshold",
+        "Stalled For", "Enquiry Age (Days)", "Created Date", "Last Updated",
+        "Stage Since", "Remarks"
     ]
     _hdr(ws2, m_hdrs, s)
 
@@ -136,6 +143,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             rec = item["record"]
             owner_name, _ = resolve_owner(rec, user_cache)
             is_na = item["threshold"] == 0
+            stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
             threshold_display = "NA" if is_na else item["threshold"]
             age = _calc_enquiry_age(rec)
             created = get_field_value(rec, "Created_Time", user_cache, crm)
@@ -145,34 +153,23 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             if raw_amt and str(raw_amt) not in ("null", "None"):
                 try: amt = float(raw_amt)
                 except: pass
-
-            stage_since = updated[:10] if updated != "-" and len(updated) >= 10 else updated
-
-            # For NA (no kVA set): calculate stalled_for as calendar days from stage_since to today
-            if is_na:
-                try:
-                    stalled_for = (date.today() - datetime.strptime(stage_since, "%Y-%m-%d").date()).days
-                except:
-                    stalled_for = item["days_stalled"]
-            else:
-                stalled_for = max(0, item["days_stalled"] - item["threshold"])
-
             master.append({
                 "row": [
-                    get_field_value(rec, "ENQ_NUM", user_cache, crm),       # col 1:  Enquiry No.
-                    age,                                                      # col 2:  Enquiry Age (Days)
-                    stage_since,                                              # col 3:  Stage Since
-                    stalled_for,                                              # col 4:  Stalled For
-                    owner_name,                                               # col 5:  Enquiry Owner
-                    get_field_value(rec, "Account_Name", user_cache, crm),   # col 6:  Customer Name
-                    get_field_value(rec, "OFFERING", user_cache, crm),       # col 7:  Offering
-                    get_field_value(rec, "DG_KVA", user_cache, crm),         # col 8:  DG kVA
-                    amt,                                                      # col 9:  Amount
-                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,  # col 10: Last Updated
-                    get_field_value(rec, "Deal_Name", user_cache, crm),      # col 11: Enquiry Name
-                    get_field_value(rec, "Status_Remarks", user_cache, crm), # col 12: Remarks
-                    item.get("kva_category"),                                 # col 13: kVA Category
-                    threshold_display,                                        # col 14: Threshold
+                    owner_name,
+                    get_field_value(rec, "Account_Name", user_cache, crm),
+                    get_field_value(rec, "Deal_Name", user_cache, crm),
+                    get_field_value(rec, "ENQ_NUM", user_cache, crm),
+                    stage_names.get(stage, stage),
+                    get_field_value(rec, "DG_KVA", user_cache, crm),
+                    get_field_value(rec, "OFFERING", user_cache, crm),
+                    amt,
+                    threshold_display,
+                    stalled_for,
+                    age,
+                    created[:10] if created != "-" and len(created) >= 10 else created,
+                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
+                    updated[:10] if updated != "-" and len(updated) >= 10 else updated,
+                    get_field_value(rec, "Status_Remarks", user_cache, crm),
                 ],
                 "stalled_for": stalled_for if isinstance(stalled_for, int) else 0
             })
@@ -184,14 +181,12 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for ci, val in enumerate(row, 1):
             c = ws2.cell(row=ri, column=ci, value=val)
             c.border = s["b"]; c.font = s["df"]
-        # Highlight Stalled For (col 4)
         sf_val = item["stalled_for"]
-        sf = ws2.cell(row=ri, column=4)
+        sf = ws2.cell(row=ri, column=10)
         if isinstance(sf_val, int):
             if sf_val >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
             elif sf_val >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
-        # Amount format (col 9)
-        if row[8] is not None: ws2.cell(row=ri, column=9).number_format = '#,##0'
+        if row[7] is not None: ws2.cell(row=ri, column=8).number_format = '#,##0'
 
     _autowidth(ws2, m_hdrs, len(master)); _filter(ws2, m_hdrs, len(master))
     ws2.freeze_panes = "A2"
@@ -223,11 +218,9 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     # SHEET 5+: PER STAGE
     # ================================================================
     log.info("  Building per-stage sheets...")
-    # Exact column sequence as required
-    e_hdrs = [
-        "Enquiry No.", "Enquiry Age (Days)", "Stage Since", "Stalled For",
-        "Enquiry Owner", "Customer Name", "Offering", "DG kVA", "Amount",
-        "Last Updated", "Enquiry Name", "Remarks", "kVA Category", "Threshold"
+    e_hdrs = [c["label"] for c in config["enquiry_columns"]] + [
+        "kVA Category", "Threshold", "Stalled For",
+        "Enquiry Age (Days)", "Stage Since"
     ]
 
     for stage in stages:
@@ -241,55 +234,20 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
         for ri, item in enumerate(items, 2):
             rec = item["record"]
             is_na = item["threshold"] == 0
+            stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
             threshold_display = "NA" if is_na else f"{item['threshold']} day(s)"
             age = _calc_enquiry_age(rec)
             mod = get_field_value(rec, "Modified_Time", user_cache, crm)
             stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
-            last_updated = mod[:10] if mod != "-" and len(mod) >= 10 else mod
 
-            # For NA (no kVA set): calculate stalled_for as calendar days from stage_since to today
-            if is_na:
-                try:
-                    stalled_for = (date.today() - datetime.strptime(stage_since, "%Y-%m-%d").date()).days
-                except:
-                    stalled_for = item["days_stalled"]
-            else:
-                stalled_for = max(0, item["days_stalled"] - item["threshold"])
-            amt = None
-            raw_amt = rec.get("Amount")
-            if raw_amt and str(raw_amt) not in ("null", "None"):
-                try: amt = float(raw_amt)
-                except: pass
-
-            # Exact sequence: Enq No. | Enquiry Age | Owner | Offering | Amount |
-            #                 Customer Name | Enquiry Name | kVA | Stage | Stage Since |
-            #                 Last Updated | Stalled For | Remarks | Kva category | threshold
-            row = [
-                get_field_value(rec, "ENQ_NUM", user_cache, crm),        # col 1:  Enquiry No.
-                age,                                                       # col 2:  Enquiry Age (Days)
-                stage_since,                                               # col 3:  Stage Since
-                stalled_for,                                               # col 4:  Stalled For
-                get_field_value(rec, "Owner", user_cache, crm),           # col 5:  Enquiry Owner
-                get_field_value(rec, "Account_Name", user_cache, crm),    # col 6:  Customer Name
-                get_field_value(rec, "OFFERING", user_cache, crm),        # col 7:  Offering
-                get_field_value(rec, "DG_KVA", user_cache, crm),          # col 8:  DG kVA
-                amt,                                                       # col 9:  Amount
-                last_updated,                                              # col 10: Last Updated
-                get_field_value(rec, "Deal_Name", user_cache, crm),       # col 11: Enquiry Name
-                get_field_value(rec, "Status_Remarks", user_cache, crm),  # col 12: Remarks
-                item["kva_category"],                                      # col 13: kVA Category
-                threshold_display,                                         # col 14: Threshold
-            ]
-
+            row = [get_field_value(rec, c["field"], user_cache, crm) for c in config["enquiry_columns"]]
+            row.extend([item["kva_category"], threshold_display, stalled_for, age, stage_since])
             for ci, val in enumerate(row, 1):
                 c = ws_stg.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]; c.font = s["df"]
 
-            # Amount format (col 9)
-            if amt is not None: ws_stg.cell(row=ri, column=9).number_format = '#,##0'
-
-            # Highlight Stalled For (col 4)
-            sf = ws_stg.cell(row=ri, column=4)
+            sf_ci = len(row) - 2
+            sf = ws_stg.cell(row=ri, column=sf_ci)
             if isinstance(stalled_for, int):
                 if stalled_for >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
                 elif stalled_for >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
@@ -299,7 +257,187 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
     # ================================================================
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    filename = f"CRM Lead & Enquiries stalled_activities_{timestamp}.xlsx"
+    filename = f"stalled_report_{timestamp}.xlsx"
     wb.save(filename)
     log.info(f"  Excel saved: {filename}")
+    return filename
+
+
+# ================================================================
+# OWNER EXCEL (individual report per owner)
+# ================================================================
+
+def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
+                      config, user_cache, crm) -> str:
+    """Build Excel for a single owner with only their items."""
+    if not HAS_OPENPYXL:
+        return None
+
+    wb = Workbook()
+    s = _styles()
+    stage_names = config["stage_display_names"]
+
+    # ================================================================
+    # SHEET 1: SUMMARY
+    # ================================================================
+    ws = wb.active; ws.title = "Summary"; ws.sheet_properties.tabColor = "2C3E50"
+    ws["A1"] = f"Stalled Items Report — {owner_name}"
+    ws["A1"].font = Font(bold=True, size=14, name="Arial", color="2C3E50")
+    ws["A2"] = f"Date: {date.today().strftime('%d-%b-%Y, %A')}"
+    ws["A2"].font = Font(size=11, name="Arial")
+    ws["A3"] = "Please review and take action on the items below."
+    ws["A3"].font = Font(size=10, name="Arial", color="C0392B")
+
+    ws["A5"] = "Section"; ws["B5"] = "Count"
+    ws["A5"].font = s["hf"]; ws["A5"].fill = s["hfill"]; ws["A5"].border = s["b"]
+    ws["B5"].font = s["hf"]; ws["B5"].fill = s["hfill"]; ws["B5"].border = s["b"]
+
+    # Count leads
+    lead_na_count = len([a for a in lead_alerts if a.get("type") == "No Action"])
+    lead_nc_count = len([a for a in lead_alerts if a.get("type") == "Not Converted"])
+
+    # Count enquiries by stage
+    stage_counts = defaultdict(int)
+    for ea in enq_alerts:
+        stage_counts[ea.get("stage", "Unknown")] += 1
+
+    row_i = 6
+    ws.cell(row=row_i, column=1, value="Leads — No Action").font = s["df"]
+    ws.cell(row=row_i, column=1).border = s["b"]
+    c = ws.cell(row=row_i, column=2, value=lead_na_count)
+    c.font = s["rf"] if lead_na_count > 0 else s["df"]; c.border = s["b"]
+    row_i += 1
+
+    ws.cell(row=row_i, column=1, value="Leads — Not Converted").font = s["df"]
+    ws.cell(row=row_i, column=1).border = s["b"]
+    c = ws.cell(row=row_i, column=2, value=lead_nc_count)
+    c.font = s["rf"] if lead_nc_count > 0 else s["df"]; c.border = s["b"]
+    row_i += 1
+
+    for stage in config["stages_to_monitor"]:
+        if stage in config["terminal_stages"]: continue
+        cnt = stage_counts.get(stage, 0)
+        if cnt == 0: continue
+        display = stage_names.get(stage, stage)
+        ws.cell(row=row_i, column=1, value=f"Enquiries — {display}").font = s["df"]
+        ws.cell(row=row_i, column=1).border = s["b"]
+        c = ws.cell(row=row_i, column=2, value=cnt)
+        c.font = s["rf"] if cnt > 0 else s["df"]; c.border = s["b"]
+        row_i += 1
+
+    total = lead_na_count + lead_nc_count + len(enq_alerts)
+    ws.cell(row=row_i, column=1, value="TOTAL").font = s["bf"]
+    ws.cell(row=row_i, column=1).border = s["b"]
+    ws.cell(row=row_i, column=2, value=total).font = s["rf"]
+    ws.cell(row=row_i, column=2).border = s["b"]
+
+    ws.column_dimensions["A"].width = 40
+    ws.column_dimensions["B"].width = 12
+
+    # ================================================================
+    # SHEET 2: MY LEADS (if any)
+    # ================================================================
+    if lead_alerts:
+        ws_leads = wb.create_sheet("My Leads"); ws_leads.sheet_properties.tabColor = "C0392B"
+        l_hdrs = [c["label"] for c in config["lead_columns"]] + [
+            "Issue", "Created Date", "Lead Age (Days)", "Biz Days Overdue"
+        ]
+        _hdr(ws_leads, l_hdrs, s)
+
+        for ri, item in enumerate(lead_alerts, 2):
+            ld = item["lead"]
+            row = [get_field_value(ld, c["field"], user_cache, crm) for c in config["lead_columns"]]
+            created = get_field_value(ld, "Created_Time", user_cache, crm)
+            created_short = created[:10] if created != "-" and len(created) >= 10 else created
+            age = _calc_enquiry_age(ld)
+            row.extend([item["type"], created_short, age, item["days"]])
+            for ci, val in enumerate(row, 1):
+                c = ws_leads.cell(row=ri, column=ci, value=val)
+                c.border = s["b"]; c.font = s["df"]
+            # Red on issue and days columns
+            ws_leads.cell(row=ri, column=len(row)-3).font = s["rf"]
+            ws_leads.cell(row=ri, column=len(row)).font = s["rf"]
+
+        _autowidth(ws_leads, l_hdrs, len(lead_alerts))
+        _filter(ws_leads, l_hdrs, len(lead_alerts))
+        ws_leads.freeze_panes = "A2"
+
+    # ================================================================
+    # SHEET 3: MY ENQUIRIES (all stages combined)
+    # ================================================================
+    if enq_alerts:
+        ws_enq = wb.create_sheet("My Enquiries"); ws_enq.sheet_properties.tabColor = "E67E22"
+        e_hdrs = [
+            "Customer Name", "Enquiry Name", "Enq No.", "Stage",
+            "kVA", "Offering", "Amount (₹)", "kVA Category", "Threshold",
+            "Stalled For", "Enquiry Age (Days)", "Created Date",
+            "Stage Since", "Remarks"
+        ]
+        _hdr(ws_enq, e_hdrs, s)
+
+        enq_rows = []
+        for item in enq_alerts:
+            rec = item["record"]
+            is_na = item["threshold"] == 0
+            stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
+            threshold_display = "NA" if is_na else item["threshold"]
+            age = _calc_enquiry_age(rec)
+            mod = get_field_value(rec, "Modified_Time", user_cache, crm)
+            stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
+            amt = None
+            raw_amt = rec.get("Amount")
+            if raw_amt and str(raw_amt) not in ("null", "None"):
+                try: amt = float(raw_amt)
+                except: pass
+
+            stage_display = stage_names.get(item.get("stage",""), item.get("stage",""))
+            enq_rows.append({
+                "row": [
+                    get_field_value(rec, "Account_Name", user_cache, crm),
+                    get_field_value(rec, "Deal_Name", user_cache, crm),
+                    get_field_value(rec, "ENQ_NUM", user_cache, crm),
+                    stage_display,
+                    get_field_value(rec, "DG_KVA", user_cache, crm),
+                    get_field_value(rec, "OFFERING", user_cache, crm),
+                    amt,
+                    item["kva_category"],
+                    threshold_display,
+                    stalled_for,
+                    age,
+                    get_field_value(rec, "Created_Time", user_cache, crm)[:10],
+                    stage_since,
+                    get_field_value(rec, "Status_Remarks", user_cache, crm),
+                ],
+                "stalled_for": stalled_for if isinstance(stalled_for, int) else 0
+            })
+
+        # Sort by stage then stalled_for descending
+        enq_rows.sort(key=lambda x: (x["row"][3], -x["stalled_for"]))
+
+        for ri, item in enumerate(enq_rows, 2):
+            row = item["row"]
+            for ci, val in enumerate(row, 1):
+                c = ws_enq.cell(row=ri, column=ci, value=val)
+                c.border = s["b"]; c.font = s["df"]
+            # Highlight Stalled For (col 10)
+            sf_val = item["stalled_for"]
+            sf = ws_enq.cell(row=ri, column=10)
+            if isinstance(sf_val, int):
+                if sf_val >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
+                elif sf_val >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
+            # Amount format (col 7)
+            if row[6] is not None: ws_enq.cell(row=ri, column=7).number_format = '#,##0'
+
+        _autowidth(ws_enq, e_hdrs, len(enq_rows))
+        _filter(ws_enq, e_hdrs, len(enq_rows))
+        ws_enq.freeze_panes = "A2"
+
+    # ================================================================
+    # SAVE
+    # ================================================================
+    os.makedirs("owner_reports", exist_ok=True)
+    safe_name = owner_name.replace(" ", "_").replace("/", "_")
+    timestamp = datetime.now().strftime('%Y-%m-%d')
+    filename = f"owner_reports/{safe_name}_{timestamp}.xlsx"
+    wb.save(filename)
     return filename
