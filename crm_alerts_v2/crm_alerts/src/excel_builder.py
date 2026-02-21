@@ -437,7 +437,7 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
     # ================================================================
     os.makedirs("owner_reports", exist_ok=True)
     safe_name = owner_name.replace(" ", "_").replace("/", "_")
-    timestamp = datetime.now().strftime('%Y-%m-%d')
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
     filename = f"owner_reports/{safe_name}_{timestamp}.xlsx"
     wb.save(filename)
     return filename

@@ -146,7 +146,7 @@ def main():
                 <p>Report date: {date.today().strftime('%d-%b-%Y')}</p>
                 </body></html>"""
 
-                owner_subject = f"ACTION REQUIRED: {total_items} stalled items — {date.today().strftime('%d-%b-%Y')}"
+                owner_subject = f"Zoho CRM Stalled Items Report as on {date.today().strftime('%d-%b-%Y')} "
 
                 # Don't CC the owner if they're also in the CC list
                 owner_cc = [cc for cc in cc_list if cc != oe]
