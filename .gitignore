@@ -4,6 +4,6 @@ __pycache__
 *.pyc
 *.html
 *.xlsx
-
+config.json
 
 
