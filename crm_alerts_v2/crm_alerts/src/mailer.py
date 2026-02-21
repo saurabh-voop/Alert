@@ -1,7 +1,7 @@
 """
 Email Sender (Mailer)
 ======================
-Sends HTML emails via Gmail SMTP. Supports file attachments (Excel reports).
+Sends HTML emails via Gmail SMTP. Supports file attachments and CC.
 """
 
 import os
@@ -17,9 +17,11 @@ log = logging.getLogger(__name__)
 
 def send_email(to_email: str, subject: str, html_body: str,
                config: dict, test_mode: bool = False,
-               attachment_path: str = None) -> bool:
+               attachment_path: str = None,
+               cc_emails: list = None) -> bool:
     if test_mode:
-        log.info(f"[TEST] Would send to: {to_email} | Subject: {subject}")
+        cc_str = f" | CC: {', '.join(cc_emails)}" if cc_emails else ""
+        log.info(f"[TEST] Would send to: {to_email}{cc_str} | Subject: {subject}")
         return True
 
     sender = config["email"]["sender_email"]
@@ -31,6 +33,10 @@ def send_email(to_email: str, subject: str, html_body: str,
     msg["From"] = sender
     msg["To"] = to_email
     msg["Subject"] = subject
+
+    if cc_emails:
+        msg["Cc"] = ", ".join(cc_emails)
+
     msg.attach(MIMEText(html_body, "html"))
 
     # Attach file if provided
@@ -45,11 +51,17 @@ def send_email(to_email: str, subject: str, html_body: str,
             )
             msg.attach(part)
 
+    # Build full recipient list (To + CC)
+    all_recipients = [to_email]
+    if cc_emails:
+        all_recipients.extend(cc_emails)
+
     try:
         with smtplib.SMTP_SSL(host, port) as server:
             server.login(sender, password)
             server.send_message(msg)
-        log.info(f"Email sent to: {to_email}")
+        cc_str = f" (CC: {', '.join(cc_emails)})" if cc_emails else ""
+        log.info(f"Email sent to: {to_email}{cc_str}")
         return True
     except smtplib.SMTPAuthenticationError:
         log.error(f"SMTP auth failed for {sender}. Check app password.")

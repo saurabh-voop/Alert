@@ -94,7 +94,7 @@ def main():
             all_enquiry_records.append(item["record"])
     crm.bulk_fetch_accounts(all_enquiry_records)
 
-    # Excel Report (for MD)
+    # Excel Report (for MD/Management)
     log.info("")
     log.info("--- BUILDING EXCEL REPORT ---")
     excel_file = build_excel_report(
@@ -102,18 +102,18 @@ def main():
         stage_results, config, user_cache, crm
     )
 
-    # Send report to summary recipients
+    # Send full report to summary recipients (MD, Manager, you)
     log.info("")
-    log.info("--- SENDING REPORT ---")
-    subject = f"Daily Stalled Report — {date.today().strftime('%d-%b-%Y')}"
+    log.info("--- SENDING SUMMARY REPORT ---")
+    subject = f"Zoho CRM Stalled Items Report as on — {date.today().strftime('%d-%b-%Y')}"
     simple_body = f"""<html><body>
-    <p>Daily stalled report attached.</p>
+    <p>Please find attached the Stalled Items Report for your Account as on {date.today().strftime('%d-%b-%Y')}</p>
     <p>Leads (no action): {len(overdue_no_action)} | Leads (not converted): {len(overdue_not_converted)} | Enquiries stalled: {total_enq_count}</p>
     </body></html>"""
     for r in config["email"]["summary_recipients"]:
         send_email(r, subject, simple_body, config, test_mode, attachment_path=excel_file)
 
-    # Owner Alerts — individual Excel per owner
+    # Owner Alerts — individual Excel per owner, CC to manager + you
     owner_emails_sent = 0
     if config["email"]["send_owner_alerts"]:
         log.info("")
@@ -121,9 +121,12 @@ def main():
         all_owner_emails = set(list(owner_lead_alerts.keys()) + list(owner_enq_alerts.keys()))
         log.info(f"Owners with stalled items: {len(all_owner_emails)}")
 
+        # CC list from config
+        cc_list = config["email"].get("owner_alert_cc", [])
+
         for oe in all_owner_emails:
             # Get owner name from user cache
-            owner_name = oe  # fallback to email
+            owner_name = oe
             for uid, udata in user_cache.items():
                 if udata.get("email") == oe:
                     owner_name = udata.get("name", oe)
@@ -137,20 +140,22 @@ def main():
             owner_excel = build_owner_excel(oe, owner_name, la, ea, config, user_cache, crm)
 
             if owner_excel:
-                if test_mode:
-                    log.info(f"  [TEST] Would send to {oe} ({owner_name}): {total_items} items — {owner_excel}")
-                else:
-                    owner_body = f"""<html><body>
-                    <p>Hi {owner_name},</p>
-                    <p>You have <strong>{total_items} stalled items</strong> that need your attention. Please review the attached report and take action.</p>
-                    <p>Report date: {date.today().strftime('%d-%b-%Y')}</p>
-                    </body></html>"""
-                    send_email(
-                        oe,
-                        f"ACTION REQUIRED: {total_items} stalled items — {date.today().strftime('%d-%b-%Y')}",
-                        owner_body, config, test_mode,
-                        attachment_path=owner_excel
-                    )
+                owner_body = f"""<html><body>
+                <p>Hi {owner_name},</p>
+                <p>You have <strong>{total_items} stalled items</strong> that need your attention. Please review the attached report and take action.</p>
+                <p>Report date: {date.today().strftime('%d-%b-%Y')}</p>
+                </body></html>"""
+
+                owner_subject = f"ACTION REQUIRED: {total_items} stalled items — {date.today().strftime('%d-%b-%Y')}"
+
+                # Don't CC the owner if they're also in the CC list
+                owner_cc = [cc for cc in cc_list if cc != oe]
+
+                send_email(
+                    oe, owner_subject, owner_body, config, test_mode,
+                    attachment_path=owner_excel,
+                    cc_emails=owner_cc
+                )
                 owner_emails_sent += 1
 
     # Done

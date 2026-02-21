@@ -257,7 +257,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
     # ================================================================
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    filename = f"stalled_report_{timestamp}.xlsx"
+    filename = f"ZOHO CRM Lead & Enquiry stalled_activity_{timestamp}.xlsx"
     wb.save(filename)
     log.info(f"  Excel saved: {filename}")
     return filename
@@ -281,7 +281,7 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
     # SHEET 1: SUMMARY
     # ================================================================
     ws = wb.active; ws.title = "Summary"; ws.sheet_properties.tabColor = "2C3E50"
-    ws["A1"] = f"Stalled Items Report — {owner_name}"
+    ws["A1"] = f"ZOHO CRM Stalled Items Report — {owner_name}"
     ws["A1"].font = Font(bold=True, size=14, name="Arial", color="2C3E50")
     ws["A2"] = f"Date: {date.today().strftime('%d-%b-%Y, %A')}"
     ws["A2"].font = Font(size=11, name="Arial")
