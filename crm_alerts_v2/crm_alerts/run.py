@@ -142,7 +142,7 @@ def main():
             if owner_excel:
                 owner_body = f"""<html><body>
                 <p>Hi {owner_name},</p>
-                <p>You have <strong>{total_items} stalled items</strong> that need your attention. Please review the attached report and take action.</p>
+                <p>You have <strong>{total_items} stalled items in ZOHO CRM</strong> that need your attention. Please review the attached report and take action.</p>
                 <p>Report date: {date.today().strftime('%d-%b-%Y')}</p>
                 </body></html>"""
 
