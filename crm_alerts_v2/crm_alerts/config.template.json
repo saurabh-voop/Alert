@@ -1,0 +1,130 @@
+{
+    "_comment": "Copy this file to config.json and replace ALL PASTE_YOUR_* placeholders before running.",
+
+    "zoho": {
+        "client_id":      "PASTE_YOUR_CLIENT_ID",
+        "client_secret":  "PASTE_YOUR_NEW_CLIENT_SECRET",
+        "refresh_token":  "PASTE_YOUR_REFRESH_TOKEN",
+        "api_domain":     "https://www.zohoapis.in",
+        "accounts_url":   "https://accounts.zoho.in",
+        "enquiry_module": "Deals"
+    },
+
+    "email": {
+        "smtp_host":          "smtp.gmail.com",
+        "smtp_port":          465,
+        "sender_email":       "PASTE_YOUR_GMAIL_ADDRESS",
+        "sender_password":    "PASTE_YOUR_APP_PASSWORD",
+        "summary_recipients": [
+            "md@yourcompany.com",
+            "manager@yourcompany.com"
+        ],
+        "owner_alert_cc": [
+            "md@yourcompany.com"
+        ],
+        "send_owner_alerts": true
+    },
+
+    "lead_thresholds": {
+        "no_action_days":    1,
+        "not_converted_days": 3
+    },
+
+    "lead_terminal_statuses": [
+        "ORDER WON", "Converted", "Junk", "Not Qualified"
+    ],
+
+    "enquiry_cutoff_date": "2025-04-01",
+
+    "kva_categories": [
+        {
+            "label":               "Standard (10-180 kVA)",
+            "min_kva":             10,
+            "max_kva":             180,
+            "yet_to_quote_days":   1,
+            "quoted_days":         1,
+            "finalization_days":   1
+        },
+        {
+            "label":               "Medium (200-750 kVA)",
+            "min_kva":             200,
+            "max_kva":             750,
+            "yet_to_quote_days":   3,
+            "quoted_days":         3,
+            "finalization_days":   3
+        },
+        {
+            "label":               "Large (1010+ kVA)",
+            "min_kva":             1010,
+            "max_kva":             99999,
+            "yet_to_quote_days":   5,
+            "quoted_days":         5,
+            "finalization_days":   5
+        }
+    ],
+
+    "default_thresholds": {
+        "yet_to_quote_days":  1,
+        "quoted_days":        1,
+        "finalization_days":  1,
+        "label":              "NA"
+    },
+
+    "fixed_stage_thresholds": {
+        "WON":          1,
+        "ORDER_BOOKED": 1,
+        "HOLD":         7,
+        "BUDGETARY":    7,
+        "MFC":          2
+    },
+
+    "stages_to_monitor": [
+        "YET_TO_QUOTE", "QUOTED", "FINALIZATION",
+        "WON", "ORDER_BOOKED", "HOLD", "BUDGETARY", "MFC"
+    ],
+
+    "terminal_stages": ["INVOICED", "LOST", "REGRET"],
+
+    "stage_display_names": {
+        "YET_TO_QUOTE":  "Yet To Quote",
+        "QUOTED":        "Quoted",
+        "FINALIZATION":  "Finalization",
+        "WON":           "Won - Order Not Booked",
+        "ORDER_BOOKED":  "Order Booked - Pending",
+        "HOLD":          "On Hold",
+        "BUDGETARY":     "Budgetary Estimate",
+        "MFC":           "MFC - Manufacturing Clearance"
+    },
+
+    "stage_colors": {
+        "YET_TO_QUOTE":  "#e74c3c",
+        "QUOTED":        "#e67e22",
+        "FINALIZATION":  "#f39c12",
+        "WON":           "#27ae60",
+        "ORDER_BOOKED":  "#2980b9",
+        "HOLD":          "#8e44ad",
+        "BUDGETARY":     "#8e44ad",
+        "MFC":           "#2c3e50"
+    },
+
+    "lead_columns": [
+        {"field": "Full_Name",        "label": "Lead Name"},
+        {"field": "Company",          "label": "Company"},
+        {"field": "Owner",            "label": "Lead Owner"},
+        {"field": "Created_By",       "label": "Created By"},
+        {"field": "Last_Visited_Time","label": "Most Recent Visit"},
+        {"field": "Phone",            "label": "Phone"}
+    ],
+
+    "enquiry_columns": [
+        {"field": "Deal_Name",      "label": "Enquiry Name"},
+        {"field": "Account_Name",   "label": "Customer Name"},
+        {"field": "ENQ_NUM",        "label": "Enquiry No."},
+        {"field": "Owner",          "label": "Enquiry Owner"},
+        {"field": "OFFERING",       "label": "Offering"},
+        {"field": "Amount",         "label": "Amount"},
+        {"field": "DG_KVA",         "label": "DG kVA"},
+        {"field": "Modified_Time",  "label": "Last Updated"},
+        {"field": "Status_Remarks", "label": "Remarks"}
+    ]
+}

@@ -22,7 +22,7 @@ class ZohoCRM:
     def _headers_json(self) -> dict:
         return {
             "Authorization": f"Zoho-oauthtoken {self.auth.get_access_token()}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     def _headers_get(self) -> dict:
@@ -37,11 +37,16 @@ class ZohoCRM:
     def coql_query(self, query: str) -> list:
         url = f"{self.api_domain}/crm/v5/coql"
         try:
-            resp = requests.post(url, headers=self._headers_json(),
-                                 json={"select_query": query}, timeout=30)
+            resp = requests.post(
+                url,
+                headers=self._headers_json(),
+                json={"select_query": query},
+                timeout=30,
+            )
         except requests.RequestException as e:
             log.warning(f"Network error: {e}")
             return []
+
         if resp.status_code == 200:
             return resp.json().get("data", [])
         elif resp.status_code == 204:
@@ -55,6 +60,7 @@ class ZohoCRM:
         fields_str = ", ".join(fields)
         all_records = []
         offset = 0
+
         while offset < max_records:
             query = (
                 f"SELECT {fields_str} FROM {module} "
@@ -68,6 +74,7 @@ class ZohoCRM:
             if len(records) < 200:
                 break
             offset += 200
+
         return all_records
 
     # ----------------------------------------------------------------
@@ -77,6 +84,7 @@ class ZohoCRM:
     def fetch_users(self) -> dict:
         if self._user_cache:
             return self._user_cache
+
         url = f"{self.api_domain}/crm/v2/users?type=AllUsers"
         try:
             resp = requests.get(url, headers=self._headers_get(), timeout=30)
@@ -85,13 +93,16 @@ class ZohoCRM:
                     uid = str(u.get("id", ""))
                     name = u.get("full_name", "")
                     if not name:
-                        name = (u.get("first_name", "") + " " + u.get("last_name", "")).strip()
+                        name = (
+                            u.get("first_name", "") + " " + u.get("last_name", "")
+                        ).strip()
                     self._user_cache[uid] = {"name": name, "email": u.get("email", "")}
                 log.info(f"Fetched {len(self._user_cache)} CRM users.")
             else:
                 log.warning(f"Users API error ({resp.status_code}): {resp.text[:200]}")
         except Exception as e:
             log.warning(f"Could not fetch users: {e}")
+
         return self._user_cache
 
     # ----------------------------------------------------------------
@@ -100,9 +111,9 @@ class ZohoCRM:
 
     def bulk_fetch_accounts(self, records: list):
         """
-        Pre-fetch account names. Uses GET /Accounts/{id} per unique ID.
+        Pre-fetch account names using GET /Accounts/{id} per unique ID.
         Caches results so each account is fetched only once.
-        With 2000 unique accounts this takes ~3-4 min (vs 30+ min without caching).
+        With ~2000 unique accounts this takes 3-4 min (vs 30+ min without caching).
         """
         account_ids = set()
         for rec in records:
@@ -136,7 +147,7 @@ class ZohoCRM:
                 else:
                     self._account_cache[aid] = "-"
                     failed += 1
-            except:
+            except Exception:
                 self._account_cache[aid] = "-"
                 failed += 1
 
@@ -144,7 +155,9 @@ class ZohoCRM:
             if done % 200 == 0:
                 log.info(f"    Progress: {done}/{total} accounts")
 
-        log.info(f"  Done: {fetched} resolved, {failed} failed, {len(self._account_cache)} cached.")
+        log.info(
+            f"  Done: {fetched} resolved, {failed} failed, {len(self._account_cache)} cached."
+        )
 
     def get_account_name(self, account_id: str) -> str:
         if not account_id:

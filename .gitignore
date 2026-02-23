@@ -1,9 +1,0 @@
-venv
-daily_alert.log
-__pycache__
-*.pyc
-*.html
-*.xlsx
-config.json
-
-
