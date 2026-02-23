@@ -257,7 +257,7 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
 
     # ================================================================
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    filename = f"ZOHO CRM Lead & Enquiry stalled_activity_{timestamp}.xlsx"
+    filename = f"stalled_report_{timestamp}.xlsx"
     wb.save(filename)
     log.info(f"  Excel saved: {filename}")
     return filename
@@ -281,7 +281,7 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
     # SHEET 1: SUMMARY
     # ================================================================
     ws = wb.active; ws.title = "Summary"; ws.sheet_properties.tabColor = "2C3E50"
-    ws["A1"] = f"ZOHO CRM Stalled Items Report — {owner_name}"
+    ws["A1"] = f"Stalled Items Report — {owner_name}"
     ws["A1"].font = Font(bold=True, size=14, name="Arial", color="2C3E50")
     ws["A2"] = f"Date: {date.today().strftime('%d-%b-%Y, %A')}"
     ws["A2"].font = Font(size=11, name="Arial")
@@ -335,15 +335,15 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
     ws.column_dimensions["B"].width = 12
 
     # ================================================================
-    # SHEET 2: MY LEADS (if any)
+    # SHEET 2: MY LEADS
     # ================================================================
-    if lead_alerts:
-        ws_leads = wb.create_sheet("My Leads"); ws_leads.sheet_properties.tabColor = "C0392B"
-        l_hdrs = [c["label"] for c in config["lead_columns"]] + [
-            "Issue", "Created Date", "Lead Age (Days)", "Biz Days Overdue"
-        ]
-        _hdr(ws_leads, l_hdrs, s)
+    ws_leads = wb.create_sheet("My Leads"); ws_leads.sheet_properties.tabColor = "C0392B"
+    l_hdrs = [c["label"] for c in config["lead_columns"]] + [
+        "Issue", "Created Date", "Lead Age (Days)", "Biz Days Overdue"
+    ]
+    _hdr(ws_leads, l_hdrs, s)
 
+    if lead_alerts:
         for ri, item in enumerate(lead_alerts, 2):
             ld = item["lead"]
             row = [get_field_value(ld, c["field"], user_cache, crm) for c in config["lead_columns"]]
@@ -354,29 +354,48 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
             for ci, val in enumerate(row, 1):
                 c = ws_leads.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]; c.font = s["df"]
-            # Red on issue and days columns
             ws_leads.cell(row=ri, column=len(row)-3).font = s["rf"]
             ws_leads.cell(row=ri, column=len(row)).font = s["rf"]
-
         _autowidth(ws_leads, l_hdrs, len(lead_alerts))
         _filter(ws_leads, l_hdrs, len(lead_alerts))
-        ws_leads.freeze_panes = "A2"
+    else:
+        ws_leads["A3"] = "No stalled leads assigned to you."
+        ws_leads["A3"].font = Font(name="Arial", size=11, italic=True, color="27AE60")
+    ws_leads.freeze_panes = "A2"
 
     # ================================================================
-    # SHEET 3: MY ENQUIRIES (all stages combined)
+    # SHEET 3+: PER STAGE SHEETS
     # ================================================================
-    if enq_alerts:
-        ws_enq = wb.create_sheet("My Enquiries"); ws_enq.sheet_properties.tabColor = "E67E22"
-        e_hdrs = [
-            "Customer Name", "Enquiry Name", "Enq No.", "Stage",
-            "kVA", "Offering", "Amount (₹)", "kVA Category", "Threshold",
-            "Stalled For", "Enquiry Age (Days)", "Created Date",
-            "Stage Since", "Remarks"
-        ]
-        _hdr(ws_enq, e_hdrs, s)
+    # Group enquiry alerts by stage
+    enq_by_stage = defaultdict(list)
+    for item in enq_alerts:
+        enq_by_stage[item.get("stage", "Unknown")].append(item)
+
+    e_hdrs = [
+        "Customer Name", "Enquiry Name", "Enq No.",
+        "kVA", "Offering", "Amount (₹)", "kVA Category", "Threshold",
+        "Stalled For", "Enquiry Age (Days)", "Created Date",
+        "Stage Since", "Remarks"
+    ]
+
+    stages = [st for st in config["stages_to_monitor"] if st not in config["terminal_stages"]]
+
+    for stage in stages:
+        display = stage_names.get(stage, stage)
+        ws_stg = wb.create_sheet(display[:31])
+        ws_stg.sheet_properties.tabColor = config["stage_colors"].get(stage, "2c3e50").replace("#", "")
+        _hdr(ws_stg, e_hdrs, s)
+
+        items = enq_by_stage.get(stage, [])
+
+        if not items:
+            ws_stg["A3"] = f"No stalled enquiries at {display} stage."
+            ws_stg["A3"].font = Font(name="Arial", size=11, italic=True, color="27AE60")
+            ws_stg.freeze_panes = "A2"
+            continue
 
         enq_rows = []
-        for item in enq_alerts:
+        for item in items:
             rec = item["record"]
             is_na = item["threshold"] == 0
             stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
@@ -390,13 +409,11 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
                 try: amt = float(raw_amt)
                 except: pass
 
-            stage_display = stage_names.get(item.get("stage",""), item.get("stage",""))
             enq_rows.append({
                 "row": [
                     get_field_value(rec, "Account_Name", user_cache, crm),
                     get_field_value(rec, "Deal_Name", user_cache, crm),
                     get_field_value(rec, "ENQ_NUM", user_cache, crm),
-                    stage_display,
                     get_field_value(rec, "DG_KVA", user_cache, crm),
                     get_field_value(rec, "OFFERING", user_cache, crm),
                     amt,
@@ -411,26 +428,25 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
                 "stalled_for": stalled_for if isinstance(stalled_for, int) else 0
             })
 
-        # Sort by stage then stalled_for descending
-        enq_rows.sort(key=lambda x: (x["row"][3], -x["stalled_for"]))
+        enq_rows.sort(key=lambda x: -x["stalled_for"])
 
         for ri, item in enumerate(enq_rows, 2):
             row = item["row"]
             for ci, val in enumerate(row, 1):
-                c = ws_enq.cell(row=ri, column=ci, value=val)
+                c = ws_stg.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]; c.font = s["df"]
-            # Highlight Stalled For (col 10)
+            # Highlight Stalled For (col 9)
             sf_val = item["stalled_for"]
-            sf = ws_enq.cell(row=ri, column=10)
+            sf = ws_stg.cell(row=ri, column=9)
             if isinstance(sf_val, int):
                 if sf_val >= 10: sf.font = s["rf"]; sf.fill = s["redfill"]
                 elif sf_val >= 5: sf.font = s["bf"]; sf.fill = s["yellowfill"]
-            # Amount format (col 7)
-            if row[6] is not None: ws_enq.cell(row=ri, column=7).number_format = '#,##0'
+            # Amount format (col 6)
+            if row[5] is not None: ws_stg.cell(row=ri, column=6).number_format = '#,##0'
 
-        _autowidth(ws_enq, e_hdrs, len(enq_rows))
-        _filter(ws_enq, e_hdrs, len(enq_rows))
-        ws_enq.freeze_panes = "A2"
+        _autowidth(ws_stg, e_hdrs, len(enq_rows))
+        _filter(ws_stg, e_hdrs, len(enq_rows))
+        ws_stg.freeze_panes = "A2"
 
     # ================================================================
     # SAVE
