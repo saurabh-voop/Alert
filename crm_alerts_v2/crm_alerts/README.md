@@ -356,3 +356,10 @@ Tail via PowerShell: `Get-Content daily_alert.log -Tail 50 -Wait`
 | Email lands in spam | Add the sender address to contacts; prefer a Google Workspace account |
 | Task Scheduler not running | Check `scheduler_run.log`; ensure the task's "Start in" directory is correct |
 | API server won't start | `pip install -r requirements.txt` to install FastAPI and uvicorn |
+
+## Scheduling the task
+
+ Useful commands:                                                                1. Run now    : Start-ScheduledTask  -TaskName 'CRM Daily Stalled Alert' 
+ 2. Check last : Get-ScheduledTaskInfo -TaskName 'CRM Daily Stalled     Alert' | Select LastRunTime, LastTaskResult 
+ 3. View log   : Get-Content 'D:\ALERT\crm_alerts_v2\crm_alerts\scheduler_run.log' -Tail 50                                 
+ 5. Remove     : Unregister-ScheduledTask -TaskName 'CRM Daily Stalled Alert' -Confirm:$false 

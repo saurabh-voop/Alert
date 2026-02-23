@@ -40,7 +40,8 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RunScript  = Join-Path $ScriptDir "run.py"
 $LogFile    = Join-Path $ScriptDir "scheduler_run.log"
 
-$PythonExe = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+$PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+$PythonExe = if ($PythonCmd) { $PythonCmd.Source } else { $null }
 if (-not $PythonExe) {
     Write-Error "python not found on PATH. Install Python and retry."
     exit 1
