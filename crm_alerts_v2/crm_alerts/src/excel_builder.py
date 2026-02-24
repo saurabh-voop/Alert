@@ -282,10 +282,12 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
     # SHEETS 5+: PER STAGE
     # ----------------------------------------------------------------
     log.info("  Building per-stage sheets...")
-    e_hdrs = (
-        [c["label"] for c in config["enquiry_columns"]]
-        + ["kVA Category", "Threshold", "Stalled For", "Enquiry Age (Days)", "Stage Since"]
-    )
+    e_hdrs = [
+        "Enquiry No.", "Enquiry Age (Days)", "Enquiry Owner", "Offering",
+        "Amount", "Customer Name", "Enquiry Name", "DG kVA",
+        "Stage", "Stage Since", "Last Updated", "Stalled For",
+        "Remarks", "kVA Category", "Threshold",
+    ]
 
     for stage in stages:
         items = stage_results.get(stage, [])
@@ -309,18 +311,29 @@ def build_excel_report(overdue_no_action, overdue_not_converted,
             stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
 
             row = [
-                get_field_value(rec, c["field"], user_cache, crm)
-                for c in config["enquiry_columns"]
+                get_field_value(rec, "ENQ_NUM", user_cache, crm),       # 1.  Enquiry No.
+                age,                                                      # 2.  Enquiry Age (Days)
+                get_field_value(rec, "Owner", user_cache, crm),          # 3.  Enquiry Owner
+                get_field_value(rec, "OFFERING", user_cache, crm),       # 4.  Offering
+                get_field_value(rec, "Amount", user_cache, crm),         # 5.  Amount
+                get_field_value(rec, "Account_Name", user_cache, crm),   # 6.  Customer Name
+                get_field_value(rec, "Deal_Name", user_cache, crm),      # 7.  Enquiry Name
+                get_field_value(rec, "DG_KVA", user_cache, crm),         # 8.  DG kVA
+                display,                                                   # 9.  Stage
+                stage_since,                                               # 10. Stage Since
+                stage_since,                                               # 11. Last Updated
+                stalled_for,                                               # 12. Stalled For
+                get_field_value(rec, "Status_Remarks", user_cache, crm), # 13. Remarks
+                item["kva_category"],                                      # 14. kVA Category
+                threshold_display,                                         # 15. Threshold
             ]
-            row.extend([item["kva_category"], threshold_display, stalled_for, age, stage_since])
 
             for ci, val in enumerate(row, 1):
                 c = ws_stg.cell(row=ri, column=ci, value=val)
                 c.border = s["b"]
                 c.font = s["df"]
 
-            sf_ci = len(row) - 2
-            sf = ws_stg.cell(row=ri, column=sf_ci)
+            sf = ws_stg.cell(row=ri, column=12)  # column 12 = Stalled For
             if isinstance(stalled_for, int):
                 if stalled_for >= 10:
                     sf.font = s["rf"]
@@ -471,10 +484,10 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
         enq_by_stage[item.get("stage", "Unknown")].append(item)
 
     e_hdrs = [
-        "Customer Name", "Enquiry Name", "Enq No.",
-        "kVA", "Offering", "Amount (₹)", "kVA Category", "Threshold",
-        "Stalled For", "Enquiry Age (Days)", "Created Date",
-        "Stage Since", "Remarks",
+        "Enquiry No.", "Enquiry Age (Days)", "Enquiry Owner", "Offering",
+        "Amount", "Customer Name", "Enquiry Name", "DG kVA",
+        "Stage", "Stage Since", "Stalled For",
+        "Remarks", "kVA Category", "Threshold",
     ]
 
     stages = [st for st in config["stages_to_monitor"] if st not in config["terminal_stages"]]
@@ -499,35 +512,30 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
             rec = item["record"]
             is_na = item["threshold"] == 0
             stalled_for = "NA" if is_na else max(0, item["days_stalled"] - item["threshold"])
-            threshold_display = "NA" if is_na else item["threshold"]
+            threshold_display = "NA" if is_na else f"{item['threshold']} day(s)"
             age = _calc_age(rec)
             mod = get_field_value(rec, "Modified_Time", user_cache, crm)
             stage_since = mod[:10] if mod != "-" and len(mod) >= 10 else mod
 
-            amt = None
-            raw_amt = rec.get("Amount")
-            if raw_amt and str(raw_amt) not in ("null", "None"):
-                try:
-                    amt = float(raw_amt)
-                except (ValueError, TypeError):
-                    pass
+            row = [
+                get_field_value(rec, "ENQ_NUM", user_cache, crm),       # 1.  Enquiry No.
+                age,                                                      # 2.  Enquiry Age (Days)
+                get_field_value(rec, "Owner", user_cache, crm),          # 3.  Enquiry Owner
+                get_field_value(rec, "OFFERING", user_cache, crm),       # 4.  Offering
+                get_field_value(rec, "Amount", user_cache, crm),         # 5.  Amount
+                get_field_value(rec, "Account_Name", user_cache, crm),   # 6.  Customer Name
+                get_field_value(rec, "Deal_Name", user_cache, crm),      # 7.  Enquiry Name
+                get_field_value(rec, "DG_KVA", user_cache, crm),         # 8.  DG kVA
+                display,                                                   # 9.  Stage
+                stage_since,                                               # 10. Stage Since
+                stalled_for,                                               # 11. Stalled For
+                get_field_value(rec, "Status_Remarks", user_cache, crm), # 12. Remarks
+                item["kva_category"],                                      # 13. kVA Category
+                threshold_display,                                         # 14. Threshold
+            ]
 
             enq_rows.append({
-                "row": [
-                    get_field_value(rec, "Account_Name", user_cache, crm),
-                    get_field_value(rec, "Deal_Name", user_cache, crm),
-                    get_field_value(rec, "ENQ_NUM", user_cache, crm),
-                    get_field_value(rec, "DG_KVA", user_cache, crm),
-                    get_field_value(rec, "OFFERING", user_cache, crm),
-                    amt,
-                    item["kva_category"],
-                    threshold_display,
-                    stalled_for,
-                    age,
-                    get_field_value(rec, "Created_Time", user_cache, crm)[:10],
-                    stage_since,
-                    get_field_value(rec, "Status_Remarks", user_cache, crm),
-                ],
+                "row": row,
                 "stalled_for": stalled_for if isinstance(stalled_for, int) else 0,
             })
 
@@ -541,7 +549,7 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
                 c.font = s["df"]
 
             sf_val = item["stalled_for"]
-            sf = ws_stg.cell(row=ri, column=9)
+            sf = ws_stg.cell(row=ri, column=11)  # column 11 = Stalled For
             if isinstance(sf_val, int):
                 if sf_val >= 10:
                     sf.font = s["rf"]
@@ -549,9 +557,6 @@ def build_owner_excel(owner_email, owner_name, lead_alerts, enq_alerts,
                 elif sf_val >= 5:
                     sf.font = s["bf"]
                     sf.fill = s["yellowfill"]
-
-            if row[5] is not None:
-                ws_stg.cell(row=ri, column=6).number_format = "#,##0"
 
         _autowidth(ws_stg, e_hdrs, len(enq_rows))
         _filter(ws_stg, e_hdrs, len(enq_rows))
